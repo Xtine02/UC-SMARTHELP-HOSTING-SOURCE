@@ -1071,28 +1071,32 @@ try {
 
 app.post('/api/users', async (req: Request, res: Response) => {
   const { first_name, last_name, email, password, role, department } = req.body;
+  console.log('POST /api/users - Creating user:', { first_name, last_name, email, role, department });
+  
   if (!first_name || !last_name || !email || !password || !role) {
+    console.error('Missing required fields:', { first_name, last_name, email, password, role });
     return res.status(400).json({ error: "All required fields must be provided" });
   }
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     const [existing] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
     if (existing.length > 0) {
+      console.error('User with email already exists:', email);
       return res.status(400).json({ error: "User with this email already exists" });
     }
     const [result] = await db.query<ResultSetHeader>('INSERT INTO users (first_name, last_name, email, password, role, department) VALUES (?, ?, ?, ?, ?, ?)', 
       [first_name, last_name, email, hashedPassword, role, department || null]);
     
-    console.log('User created with ID:', result.insertId);
+    console.log('User inserted successfully with ID:', result.insertId);
     
     const [inserted] = await db.query<RowDataPacket[]>('SELECT id, first_name, last_name, email, role, department FROM users WHERE id = ?', [result.insertId]);
     
-    if (!inserted[0]) {
-      console.error('Failed to retrieve created user:', result.insertId);
+    if (!inserted || inserted.length === 0) {
+      console.error('Failed to retrieve created user with ID:', result.insertId);
       return res.status(500).json({ error: "User created but could not be retrieved", details: "Database query returned no results" });
     }
     
-    console.log('Returning user data:', inserted[0]);
+    console.log('Returning user data with 201 status:', inserted[0]);
     res.status(201).json(inserted[0]);
   } catch (error: unknown) {
     console.error('Error creating user:', error);

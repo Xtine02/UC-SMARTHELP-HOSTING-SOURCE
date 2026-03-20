@@ -135,7 +135,7 @@ const AuditTrail = ({ userId, all = false }: AuditTrailProps) => {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 w-full">
       <div className="flex items-center gap-2">
         <Activity className="h-5 w-5 text-muted-foreground" />
         <h3 className="text-lg font-semibold text-foreground">Activity History</h3>
@@ -178,8 +178,8 @@ const AuditTrail = ({ userId, all = false }: AuditTrailProps) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <Table>
+      <div className="rounded-xl border bg-card overflow-x-auto w-full">
+        <Table className="w-full">
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead className="w-[50px] text-center">

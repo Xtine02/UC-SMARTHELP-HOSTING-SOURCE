@@ -176,13 +176,17 @@ const AccountManagement = () => {
         }),
       });
       
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to create user' }));
-        throw new Error(errorData.error || errorData.details || 'Failed to create user');
-      }
+      console.log('Create user response status:', response.status);
       
       const newUserData = await response.json();
+      console.log('Create user response data:', newUserData);
+      
+      if (!response.ok) {
+        throw new Error(newUserData.error || newUserData.details || 'Failed to create user');
+      }
+      
       if (!newUserData || !newUserData.id) {
+        console.error('Invalid response - missing id field:', newUserData);
         throw new Error('Invalid response from server - no user data returned');
       }
       
@@ -194,6 +198,7 @@ const AccountManagement = () => {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
       console.error('User creation error:', error);
+      console.error('Error details:', errorMessage);
       toast({ variant: "destructive", title: "Error", description: errorMessage });
     } finally {
       setCreateLoading(false);

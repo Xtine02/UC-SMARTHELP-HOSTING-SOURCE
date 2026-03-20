@@ -90,7 +90,6 @@ const AdminDashboard = () => {
     { key: "department", label: "Department Analytics" },
     { key: "chatbot", label: "Chatbot Analytic" },
     { key: "accounts", label: "User Management" },
-    { key: "audit", label: "Audit Trail" },
     { key: "feedback", label: "Feedback Analytic" },
   ] as const;
 
@@ -392,7 +391,6 @@ const AdminDashboard = () => {
 
           <div className="p-6">
             {view === "accounts" && <AccountManagement />}
-            {view === "audit" && <AuditTrail all={true} />}
             {view === "feedback" && <ReviewAnalytics userDepartment={user?.department} userRole={user?.role} />}
             {view === "chatbot" && (
               <div className="flex flex-col items-center justify-center py-12">
