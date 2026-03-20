@@ -13,6 +13,7 @@ import ResetPassword from "./pages/ResetPassword";
 import Settings from "./pages/Settings";
 import AuditTrail from "./pages/AuditTrail";
 import Announcements from "./pages/Announcements";
+import Map from "./pages/Map";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
 import TicketsPage from "./pages/TicketsPage";
@@ -159,9 +160,9 @@ const App = () => {
             <Route path="/audit-trail" element={<AuditTrail />} />
             <Route path="/announcements" element={<Announcements />} />
             <Route path="/analytics" element={<DepartmentAnalytics />} />
+            <Route path="/map" element={<Map />} />
             <Route path="/about" element={<About />} />
             <Route path="/contact" element={<Contact />} />
-            <Route path="/map" element={<Contact />} />
             
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFound />} />
