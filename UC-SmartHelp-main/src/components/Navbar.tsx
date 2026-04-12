@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User as UserIcon } from "lucide-react";
+import { performLogout } from "@/lib/utils";
 import logo from "@/assets/uc-smarthelp-logo.jpg";
 
 interface User {
@@ -22,6 +23,9 @@ interface User {
   last_name?: string;
   lastName?: string;
   department?: string;
+  profileImage?: string;
+  profile_image?: string;
+  image?: string;
 }
 
 const Navbar = () => {
@@ -57,32 +61,8 @@ const Navbar = () => {
   }, [location.pathname]);
 
   const handleSignOut = async () => {
-    try {
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      const userId = user?.id || user?.userId || user?.user_id;
-      
-      if (userId) {
-        await fetch(`${API_URL}/api/logout`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId })
-        });
-      }
-    } catch (error) {
-      console.error("Error logging logout:", error);
-    }
-
-    // Clear storage
-    localStorage.removeItem("uc_guest");
-    localStorage.removeItem("user");
-    localStorage.removeItem("website_feedback_shown_session");
-    
-    // Dispatch events to reset components
-    window.dispatchEvent(new Event('user-logout'));
-    window.dispatchEvent(new Event('chatbot-reset'));
-    
-    // Reload page to home - this ensures chatbot widget is completely removed
-    window.location.href = "/";
+    setIsLoggingOut(true);
+    await performLogout();
   };
 
   const role = user?.role?.toLowerCase();
@@ -121,6 +101,13 @@ const Navbar = () => {
     navigate("/audit-trail");
   };
 
+  const handleTopNavClick = (path: string) => {
+    // Prevent duplicate history stacking for same route.
+    if (location.pathname.toLowerCase() === path.toLowerCase()) return;
+    // Replace keeps navbar tab switching from piling browser history entries.
+    navigate(path, { replace: true });
+  };
+
   // Determine current view state
   const dashboardPaths = ["/student-dashboard", "/StudentDashboard", "/AdminDashboard", "/AccountingDashboard", "/ScholarshipDashboard", "/GuestDashboard", "/guest-dashboard", "/dashboard"];
   const isDashboard = dashboardPaths.some(path => location.pathname.toLowerCase() === path.toLowerCase());
@@ -132,7 +119,8 @@ const Navbar = () => {
   const fullName = user?.firstName && user?.lastName 
     ? `${user.firstName} ${user.lastName}` 
     : (user?.fullName || "User");
-  const initial = (user?.firstName?.[0] || user?.fullName?.[0] || "U").toUpperCase();
+  const initial = ((user?.firstName?.[0] || "") + (user?.lastName?.[0] || "") || "U").toUpperCase();
+  const profileImage = user?.profileImage || user?.profile_image || user?.image || null;
 
   return (
     <nav className="sticky top-0 z-50 border-b bg-card/80 backdrop-blur-sm">
@@ -145,18 +133,41 @@ const Navbar = () => {
 
         {/* Navigation Links */}
         <div className="hidden items-center gap-6 md:flex">
-          <Link to="/announcements" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          <button
+            type="button"
+            onClick={() => handleTopNavClick("/announcements")}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
             Announcements
-          </Link>
-          <Link to="/about" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTopNavClick("/about")}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
             About Us
-          </Link>
-          <Link to="/contact" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTopNavClick("/contact")}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
             Contact Us
-          </Link>
-          <Link to="/map" className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTopNavClick("/map")}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
             Map
-          </Link>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTopNavClick("/help")}
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Help
+          </button>
         </div>
 
         {/* User Actions */}
@@ -164,9 +175,11 @@ const Navbar = () => {
           {isLoggedIn && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground shadow-sm hover:scale-105 active:scale-95 transition-all">
+                <button className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground shadow-sm hover:scale-105 active:scale-95 transition-all overflow-hidden">
                   {isGuest ? (
                     <UserIcon className="h-5 w-5" />
+                  ) : profileImage ? (
+                    <img src={profileImage} alt={fullName} className="h-full w-full object-cover" />
                   ) : (
                     <span>{initial}</span>
                   )}

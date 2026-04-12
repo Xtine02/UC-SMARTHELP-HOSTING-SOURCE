@@ -16,6 +16,7 @@ import Announcements from "./pages/Announcements";
 import Map from "./pages/Map";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
+import Help from "./pages/Help";
 import TicketsPage from "./pages/TicketsPage";
 import DepartmentAnalytics from "./pages/DepartmentAnalytics";
 import NotFound from "./pages/NotFound";
@@ -47,12 +48,6 @@ const App = () => {
     }
   }, []);
 
-  // Clear session flag on app load to start fresh
-  useEffect(() => {
-    console.log('🔄 App loaded - clearing session feedback flag');
-    localStorage.removeItem("website_feedback_shown_session");
-  }, []);
-
   // Auto-show feedback 30 seconds after login
   useEffect(() => {
     const userId = user?.id || user?.userId || user?.user_id;
@@ -67,14 +62,11 @@ const App = () => {
         clearTimeout(feedbackTimeoutRef.current);
       }
 
-      // Clear the session flag when user logs in (new session)
-      localStorage.removeItem("website_feedback_shown_session");
-
       // Set new timeout for 30 seconds
       feedbackTimeoutRef.current = setTimeout(() => {
         console.log('⏰ 30 seconds elapsed - checking if feedback should show');
         // Only show if feedback hasn't been shown/skipped in this session
-        if (!localStorage.getItem("website_feedback_shown_session")) {
+        if (!sessionStorage.getItem("website_feedback_shown_session")) {
           console.log('📢 Showing website feedback dialog');
           setShowWebsiteFeedback(true);
         } else {
@@ -87,7 +79,9 @@ const App = () => {
     if (!userId && prevUserId) {
       console.log('👋 User logged out');
       // Clear the session flag on logout
-      localStorage.removeItem("website_feedback_shown_session");
+      sessionStorage.removeItem("website_feedback_shown_session");
+      // Dispatch chatbot reset event to remove chatbot widget
+      window.dispatchEvent(new Event('chatbot-reset'));
     }
 
     // Update previous user ref
@@ -100,6 +94,20 @@ const App = () => {
       }
     };
   }, [user]);
+
+  // Listen for storage changes (logout from other tab or back button after logout)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      // If 'user' key is removed from localStorage, trigger chatbot reset
+      if (e.key === 'user' && e.newValue === null) {
+        console.log('🔄 User cleared from storage - dispatching chatbot reset');
+        window.dispatchEvent(new Event('chatbot-reset'));
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // Listen for manual feedback trigger from navbar
   useEffect(() => {
@@ -163,6 +171,7 @@ const App = () => {
             <Route path="/map" element={<Map />} />
             <Route path="/about" element={<About />} />
             <Route path="/contact" element={<Contact />} />
+            <Route path="/help" element={<Help />} />
             
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFound />} />

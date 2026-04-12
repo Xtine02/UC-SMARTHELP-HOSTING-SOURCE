@@ -15,7 +15,7 @@ if (!VERBOSE_LOGS) {
 }
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(cors());
 
 const db = mysql.createPool({
@@ -31,6 +31,7 @@ let RESPONSE_TABLE = 'ticket_response';
 
 interface DBColumn extends RowDataPacket {
   Field: string;
+  Extra?: string;
 }
 
 interface User extends RowDataPacket {
@@ -46,6 +47,7 @@ interface User extends RowDataPacket {
   lastName?: string;
   email: string;
   password?: string;
+  is_disabled?: number | boolean;
 }
 
 // Helper to return the correct ticket response table name.
@@ -99,6 +101,15 @@ const initializeDatabase = async () => {
     if (!columnNames.includes('staff_acknowledge_at')) {
       await connection.query("ALTER TABLE tickets ADD COLUMN staff_acknowledge_at TIMESTAMP NULL");
     }
+    if (!columnNames.includes('closed_at')) {
+      await connection.query("ALTER TABLE tickets ADD COLUMN closed_at TIMESTAMP NULL");
+    }
+    if (!columnNames.includes('reopen_at')) {
+      await connection.query("ALTER TABLE tickets ADD COLUMN reopen_at TIMESTAMP NULL");
+    }
+    if (!columnNames.includes('resolved_at')) {
+      await connection.query("ALTER TABLE tickets ADD COLUMN resolved_at TIMESTAMP NULL");
+    }
 
     const ticketRefColumn = columnNames.includes('id') ? 'id' : (columnNames.includes('ticket_id') ? 'ticket_id' : 'id');
 
@@ -107,6 +118,18 @@ const initializeDatabase = async () => {
     const userColumnNames = userColumns.map((c) => c.Field);
     if (!userColumnNames.includes('department')) {
       await connection.query("ALTER TABLE users ADD COLUMN department VARCHAR(100)");
+    }
+    
+    // Auto-migration: Ensure users table has image column (for profile pictures)
+    if (!userColumnNames.includes('image')) {
+      await connection.query("ALTER TABLE users ADD COLUMN image LONGTEXT");
+    }
+    // Ensure image column can store larger base64 payloads
+    await connection.query("ALTER TABLE users MODIFY COLUMN image LONGTEXT NULL");
+
+    // Auto-migration: Ensure users table has is_disabled column
+    if (!userColumnNames.includes('is_disabled')) {
+      await connection.query("ALTER TABLE users ADD COLUMN is_disabled TINYINT(1) DEFAULT 0");
     }
 
     // Normalize response table naming (if old plural table exists, rename it)
@@ -226,6 +249,68 @@ const initializeDatabase = async () => {
       console.error("Error migrating department_feedback table:", err);
     }
 
+    // Create/Migrate website_feedback table
+    try {
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS website_feedback (
+          web_feedback_id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NULL,
+          is_helpful BOOLEAN NOT NULL,
+          comment TEXT,
+          date_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // Backward compatibility: ensure id column is auto increment even in old schemas
+      const [websiteColumns] = await connection.query<DBColumn[]>("SHOW COLUMNS FROM website_feedback");
+      const existingIdColumn = websiteColumns.find((c) => ["web_feedback_id", "id"].includes(c.Field));
+      if (existingIdColumn && !(existingIdColumn.Extra || "").toLowerCase().includes("auto_increment")) {
+        await connection.query(
+          `ALTER TABLE website_feedback MODIFY COLUMN ${existingIdColumn.Field} INT NOT NULL AUTO_INCREMENT`
+        );
+      }
+    } catch (err: unknown) {
+      console.error("Error migrating website_feedback table:", err);
+    }
+
+    // Create/Migrate announcement table
+    try {
+      await connection.query(`
+        CREATE TABLE IF NOT EXISTS announcement (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          user_id INT NULL,
+          role VARCHAR(50) NOT NULL,
+          audience VARCHAR(20) NOT NULL DEFAULT 'all',
+          department VARCHAR(100),
+          message TEXT NOT NULL,
+          posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      const [announcementColumns] = await connection.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
+      const announcementColumnNames = announcementColumns.map((c) => c.Field);
+      if (!announcementColumnNames.includes("user_id")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN user_id INT NULL");
+      }
+      if (!announcementColumnNames.includes("role")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'staff'");
+      }
+      if (!announcementColumnNames.includes("audience")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN audience VARCHAR(20) NOT NULL DEFAULT 'all'");
+      }
+      if (!announcementColumnNames.includes("department")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN department VARCHAR(100) NULL");
+      }
+      if (!announcementColumnNames.includes("posted_at")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+      }
+      if (!announcementColumnNames.includes("created_at")) {
+        await connection.query("ALTER TABLE announcement ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
+      }
+    } catch (err: unknown) {
+      console.error("Error migrating announcement table:", err);
+    }
+
   } catch (err: unknown) {
     console.error("Database initialization error:", err);
   } finally {
@@ -248,7 +333,9 @@ const formatUserResponse = (user: User) => {
     firstName: user.first_name || user.firstName,
     lastName: user.last_name || user.lastName,
     fullName: `${user.first_name || user.firstName} ${user.last_name || user.lastName}`,
-    email: user.email
+    email: user.email,
+    image: (user as any).image || null,
+    profileImage: (user as any).image || null
   };
 };
 
@@ -319,6 +406,10 @@ try {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
+  if (Number(user.is_disabled) === 1) {
+    return res.status(403).json({ error: "Account disabled" });
+  }
+
   let isMatch = false;
   // Try bcrypt first
   if (user.password && user.password.startsWith('$2')) {
@@ -360,32 +451,21 @@ app.post('/api/logout', async (req: Request, res: Response) => {
 });
 
 app.post('/api/update-profile', async (req: Request, res: Response) => {
-const { userId, firstName, lastName } = req.body;
+const { userId, firstName, lastName, profileImage } = req.body;
 if (!userId || !firstName || !lastName) {
   return res.status(400).json({ error: "Missing required fields" });
 }
 try {
-  let pkName = '';
-  // Determine PK column
-  try {
-    const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE user_id = ?', [userId]);
-    if (rows.length > 0) pkName = 'user_id';
-  } catch (e: unknown) {
-    // Ignore if column doesn't exist
-  }
-  
-  if (!pkName) {
-    try {
-      const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE id = ?', [userId]);
-      if (rows.length > 0) pkName = 'id';
-    } catch (e: unknown) {
-      // Ignore if column doesn't exist
-    }
-  }
+  const pkName = await detectUserPk(userId);
 
   if (!pkName) return res.status(404).json({ error: "User not found" });
 
-  await db.query(`UPDATE users SET first_name = ?, last_name = ? WHERE ${pkName} = ?`, [firstName, lastName, userId]);
+  // Update profile with optional image
+  if (typeof profileImage === "string" && profileImage.trim().length > 0) {
+    await db.query(`UPDATE users SET first_name = ?, last_name = ?, image = ? WHERE ${pkName} = ?`, [firstName, lastName, profileImage, userId]);
+  } else {
+    await db.query(`UPDATE users SET first_name = ?, last_name = ? WHERE ${pkName} = ?`, [firstName, lastName, userId]);
+  }
   
   const [updated] = await db.query<RowDataPacket[]>(`SELECT * FROM users WHERE ${pkName} = ?`, [userId]);
 
@@ -394,7 +474,8 @@ try {
 
   res.json(formatUserResponse(updated[0] as User));
 } catch (error: unknown) {
-  res.status(500).json({ error: "Server error" });
+  console.error("Error updating profile:", error);
+  res.status(500).json({ error: "Server error", details: error instanceof Error ? error.message : String(error) });
 }
 });
 
@@ -436,14 +517,27 @@ try {
 });
 
 app.post('/api/google-auth', async (req: Request, res: Response) => {
-const { email, firstName, lastName } = req.body;
+const { email, firstName, lastName, profileImage } = req.body;
 try {
   const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
   let user = rows[0];
   if (!user) {
-    await db.query<ResultSetHeader>('INSERT INTO users (first_name, last_name, email, role) VALUES (?, ?, ?, ?)', [firstName, lastName, email, 'student']);
+    await db.query<ResultSetHeader>(
+      'INSERT INTO users (first_name, last_name, email, role, image) VALUES (?, ?, ?, ?, ?)',
+      [firstName, lastName, email, 'student', profileImage || null]
+    );
     const [inserted] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
     user = inserted[0];
+  } else if ((!user.image || String(user.image).trim() === '') && typeof profileImage === 'string' && profileImage.trim() !== '') {
+    const pkName = await detectUserPk(user.id ?? user.user_id);
+    if (pkName) {
+      await db.query(`UPDATE users SET image = ? WHERE ${pkName} = ?`, [profileImage, user.id ?? user.user_id]);
+      const [updated] = await db.query<RowDataPacket[]>(`SELECT * FROM users WHERE ${pkName} = ?`, [user.id ?? user.user_id]);
+      user = updated[0];
+    }
+  }
+  if (Number(user?.is_disabled) === 1) {
+    return res.status(403).json({ error: "Account disabled" });
   }
   res.json(formatUserResponse(user as User));
 } catch (error: unknown) {
@@ -682,7 +776,8 @@ app.post('/api/tickets/:id/responses', async (req: Request, res: Response) => {
       const ticketPk = ticketCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'ticket_id')?.Field || 'id';
 
       const [currentTicket] = await db.query<RowDataPacket[]>(`SELECT status FROM tickets WHERE ${ticketPk} = ?`, [id]);
-      if (currentTicket.length > 0 && currentTicket[0].status?.toLowerCase() === 'resolved') {
+      const currentStatus = currentTicket.length > 0 ? (currentTicket[0].status || '').toString().toLowerCase() : '';
+      if (currentStatus === 'resolved' || currentStatus === 'closed') {
         await db.query(`UPDATE tickets SET status = 'Reopened', reopen_at = CURRENT_TIMESTAMP WHERE ${ticketPk} = ?`, [id]);
       }
     }
@@ -768,7 +863,30 @@ app.patch('/api/tickets/:id/status', async (req: Request, res: Response) => {
     };
     
     const dbStatus = statusMap[status.toLowerCase()] || status;
-    await db.execute(`UPDATE tickets SET status = ? WHERE ${pkName} = ?`, [dbStatus, id]);
+    
+    // Build UPDATE query with timestamp logic
+    let updateQuery = `UPDATE tickets SET status = ?`;
+    const params: any[] = [dbStatus];
+    
+    // Set resolved_at when ticket is resolved
+    if (dbStatus.toLowerCase() === 'resolved') {
+      updateQuery += `, resolved_at = CURRENT_TIMESTAMP`;
+    }
+
+    // Set closed_at when ticket is closed
+    if (dbStatus.toLowerCase() === 'closed') {
+      updateQuery += `, closed_at = CURRENT_TIMESTAMP`;
+    }
+    
+    // Set reopen_at when ticket is reopened
+    if (dbStatus.toLowerCase() === 'reopened') {
+      updateQuery += `, reopen_at = CURRENT_TIMESTAMP`;
+    }
+    
+    updateQuery += ` WHERE ${pkName} = ?`;
+    params.push(id);
+    
+    await db.execute(updateQuery, params);
 
     // Return the updated ticket so frontend can sync state exactly
     const [rows] = await db.query<RowDataPacket[]>(`
@@ -1047,17 +1165,28 @@ try {
     `];
 
     const hasDepartment = columnNames.includes("department");
+    const hasDisabledFlag = columnNames.includes("is_disabled");
+    const hasImage = columnNames.includes("image");
     if (hasDepartment) {
       console.log("✅ Department column exists, selecting with department...");
       selectColumns.push("department");
+    }
+    if (hasDisabledFlag) {
+      selectColumns.push("is_disabled");
+    }
+    if (hasImage) {
+      selectColumns.push("image");
     }
 
     const query = `SELECT ${selectColumns.join(", ")} FROM users`;
     const [rows] = await db.query<RowDataPacket[]>(query);
 
-    const result = hasDepartment
-      ? rows
-      : (rows as RowDataPacket[]).map((u) => ({ ...u, department: null }));
+    const result = (rows as RowDataPacket[]).map((u) => ({
+      ...u,
+      department: hasDepartment ? u.department ?? null : null,
+      is_disabled: hasDisabledFlag ? Number(u.is_disabled) : 0,
+      image: hasImage ? u.image ?? null : null,
+    }));
 
     console.log(`✅ Successfully fetched ${result.length} users`);
     res.json(result);
@@ -1133,14 +1262,39 @@ app.post('/api/users', async (req: Request, res: Response) => {
 
 app.patch('/api/users/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { role, department } = req.body;
+  const { role, department, is_disabled } = req.body;
 
   try {
-    const pkName = await getUserPkName();
+    if (!id) {
+      return res.status(400).json({ error: "Missing user id" });
+    }
+    const pkName = await detectUserPk(id) || await getUserPkName();
 
+    const updateFields: string[] = [];
+    const values: Array<string | number | null> = [];
+
+    if (typeof role !== "undefined") {
+      updateFields.push("role = ?");
+      values.push(role);
+    }
+    if (typeof department !== "undefined") {
+      updateFields.push("department = ?");
+      values.push(department || null);
+    }
+    if (typeof is_disabled !== "undefined") {
+      updateFields.push("is_disabled = ?");
+      values.push(Number(Boolean(is_disabled)));
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: "No valid fields provided for update" });
+    }
+
+    values.push(id);
+    const safeValues = values.map((value) => (typeof value === "undefined" ? null : value));
     const [result] = await db.execute<ResultSetHeader>(
-      `UPDATE users SET role = ?, department = ? WHERE ${pkName} = ?`,
-      [role, department || null, id]
+      `UPDATE users SET ${updateFields.join(", ")} WHERE ${pkName} = ?`,
+      safeValues
     );
 
     if (result.affectedRows === 0) {
@@ -1256,10 +1410,29 @@ app.post('/api/website-feedback', async (req: Request, res: Response) => {
   }
 
   try {
-    const [result] = await db.query<ResultSetHeader>(
-      'INSERT INTO website_feedback (user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, NOW())',
-      [user_id || null, is_helpful, comment || null]
-    );
+    const [feedbackColumns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM website_feedback");
+    const idColumn = feedbackColumns.find((c) => ["web_feedback_id", "id"].includes(c.Field))?.Field || "web_feedback_id";
+    const idDef = feedbackColumns.find((c) => c.Field === idColumn);
+    const hasAutoIncrementId = (idDef?.Extra || "").toLowerCase().includes("auto_increment");
+
+    let result: ResultSetHeader;
+    if (hasAutoIncrementId) {
+      const [insertResult] = await db.query<ResultSetHeader>(
+        `INSERT INTO website_feedback (user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, NOW())`,
+        [user_id || null, is_helpful, comment || null]
+      );
+      result = insertResult;
+    } else {
+      const [nextRows] = await db.query<RowDataPacket[]>(
+        `SELECT COALESCE(MAX(${idColumn}), 0) + 1 AS next_id FROM website_feedback`
+      );
+      const nextId = Number(nextRows[0]?.next_id || 1);
+      const [insertResult] = await db.query<ResultSetHeader>(
+        `INSERT INTO website_feedback (${idColumn}, user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, ?, NOW())`,
+        [nextId, user_id || null, is_helpful, comment || null]
+      );
+      result = insertResult;
+    }
 
     res.status(201).json({
       id: result.insertId,
@@ -1291,11 +1464,46 @@ app.get('/api/website-feedback', async (req: Request, res: Response) => {
 // Get all announcements
 app.get('/api/announcements', async (req: Request, res: Response) => {
   try {
+    const viewerRole = (req.query.viewer_role || "guest").toString().trim().toLowerCase();
+    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
+    const columnNames = columns.map((c) => c.Field);
+    const idColumn = columnNames.includes("announcement_id")
+      ? "announcement_id"
+      : columnNames.includes("id")
+      ? "id"
+      : "id";
+    const hasAudience = columnNames.includes("audience");
+    const hasRole = columnNames.includes("role");
+    const hasPostedAt = columnNames.includes("posted_at");
+    const hasCreatedAt = columnNames.includes("created_at");
+
+    let whereClause = "";
+    const params: string[] = [];
+    if (hasAudience) {
+      if (viewerRole === "admin") {
+        whereClause = "";
+      } else if (viewerRole === "staff") {
+        whereClause = "WHERE (a.audience = 'all' OR a.audience = 'staff')";
+      } else if (viewerRole === "student") {
+        whereClause = "WHERE (a.audience = 'all' OR a.audience = 'students')";
+      } else {
+        whereClause = "WHERE a.audience = 'all'";
+      }
+    }
+
+    const orderByClause = hasPostedAt
+      ? "ORDER BY a.posted_at DESC"
+      : hasCreatedAt
+      ? "ORDER BY a.created_at DESC"
+      : `ORDER BY a.${idColumn} DESC`;
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT a.announcement_id AS announcement_id, a.role, a.message, 
-              DATE_FORMAT(a.posted_at, "%Y-%m-%d %H:%i:%s") AS posted_at
+      `SELECT a.${idColumn} AS announcement_id, ${columnNames.includes("user_id") ? "a.user_id" : "NULL AS user_id"}, ${hasRole ? "a.role" : "'staff' AS role"}, ${columnNames.includes("department") ? "a.department" : "NULL AS department"}, ${hasAudience ? "a.audience" : "'all' as audience"}, a.message, 
+              ${hasPostedAt ? 'DATE_FORMAT(a.posted_at, "%Y-%m-%d %H:%i:%s")' : hasCreatedAt ? 'DATE_FORMAT(a.created_at, "%Y-%m-%d %H:%i:%s")' : "NULL"} AS posted_at
        FROM announcement a
-       ORDER BY a.posted_at DESC`
+       ${whereClause}
+       ${orderByClause}`
+      ,
+      params
     );
     res.json(rows);
   } catch (error: unknown) {
@@ -1308,9 +1516,9 @@ app.get('/api/announcements', async (req: Request, res: Response) => {
 // Create announcement (staff/admin only)
 app.post('/api/announcements', async (req: Request, res: Response) => {
   try {
-    const { role, department, message } = req.body;
+    const { user_id, role, audience, department, message } = req.body;
 
-    if (!role || !message) {
+    if (!user_id || !role || !message) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -1319,9 +1527,55 @@ app.post('/api/announcements', async (req: Request, res: Response) => {
       return res.status(403).json({ error: "Only staff and admin can create announcements" });
     }
 
+    const normalizedRole = role.toLowerCase();
+    const normalizedAudience = (audience || "").toString().trim().toLowerCase();
+    const allowedAudience = ["all", "students", "staff"];
+    const finalAudience =
+      normalizedRole === "admin"
+        ? (allowedAudience.includes(normalizedAudience) ? normalizedAudience : "all")
+        : "students";
+
+    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
+    const columnNames = columns.map((c) => c.Field);
+    const insertCols: string[] = [];
+    const placeholders: string[] = [];
+    const values: Array<string | number | null> = [];
+
+    if (columnNames.includes("user_id")) {
+      insertCols.push("user_id");
+      placeholders.push("?");
+      values.push(user_id);
+    }
+    if (columnNames.includes("role")) {
+      insertCols.push("role");
+      placeholders.push("?");
+      values.push(normalizedRole);
+    }
+    if (columnNames.includes("audience")) {
+      insertCols.push("audience");
+      placeholders.push("?");
+      values.push(finalAudience);
+    }
+    if (columnNames.includes("department")) {
+      insertCols.push("department");
+      placeholders.push("?");
+      values.push(department || null);
+    }
+    insertCols.push("message");
+    placeholders.push("?");
+    values.push(message);
+    if (columnNames.includes("posted_at")) {
+      insertCols.push("posted_at");
+      placeholders.push("NOW()");
+    }
+    if (columnNames.includes("created_at")) {
+      insertCols.push("created_at");
+      placeholders.push("NOW()");
+    }
+
     const [result] = await db.query(
-      'INSERT INTO announcement (role, department, message, posted_at) VALUES (?, ?, ?, NOW())',
-      [role, department || null, message]
+      `INSERT INTO announcement (${insertCols.join(", ")}) VALUES (${placeholders.join(", ")})`,
+      values
     );
 
     res.status(201).json({
@@ -1331,6 +1585,103 @@ app.post('/api/announcements', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error('Error creating announcement:', error);
     res.status(500).json({ error: 'Error creating announcement', details: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Update announcement (owner only, admin/staff only)
+app.patch('/api/announcements/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { user_id, role, message, audience } = req.body;
+
+    if (!user_id || !role || !message) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (!['staff', 'admin'].includes(String(role).toLowerCase())) {
+      return res.status(403).json({ error: "Only staff and admin can edit announcements" });
+    }
+
+    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
+    const columnNames = columns.map((c) => c.Field);
+    const idColumn = columnNames.includes("announcement_id") ? "announcement_id" : "id";
+
+    const [existingRows] = await db.query<RowDataPacket[]>(
+      `SELECT ${idColumn} as announcement_id, ${columnNames.includes("user_id") ? "user_id" : "NULL as user_id"} FROM announcement WHERE ${idColumn} = ? LIMIT 1`,
+      [id]
+    );
+    if (!existingRows.length) {
+      return res.status(404).json({ error: "Announcement not found" });
+    }
+    if (Number(existingRows[0].user_id) !== Number(user_id)) {
+      return res.status(403).json({ error: "You can only edit your own announcement" });
+    }
+
+    const normalizedRole = String(role).toLowerCase();
+    const normalizedAudience = (audience || "").toString().trim().toLowerCase();
+    const allowedAudience = ["all", "students", "staff"];
+    const finalAudience = normalizedRole === "admin"
+      ? (allowedAudience.includes(normalizedAudience) ? normalizedAudience : "all")
+      : "students";
+
+    const updates: string[] = ["message = ?"];
+    const values: Array<string | number> = [String(message).trim()];
+
+    if (columnNames.includes("role")) {
+      updates.push("role = ?");
+      values.push(normalizedRole);
+    }
+    if (columnNames.includes("audience")) {
+      updates.push("audience = ?");
+      values.push(finalAudience);
+    }
+    if (columnNames.includes("posted_at")) {
+      updates.push("posted_at = NOW()");
+    } else if (columnNames.includes("created_at")) {
+      updates.push("created_at = NOW()");
+    }
+
+    values.push(id);
+    await db.query(`UPDATE announcement SET ${updates.join(", ")} WHERE ${idColumn} = ?`, values);
+    res.json({ message: "Announcement updated successfully" });
+  } catch (error: unknown) {
+    console.error("Error updating announcement:", error);
+    res.status(500).json({ error: "Error updating announcement", details: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Delete announcement (owner only, admin/staff only)
+app.delete('/api/announcements/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { user_id, role } = req.body;
+
+    if (!user_id || !role) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (!['staff', 'admin'].includes(String(role).toLowerCase())) {
+      return res.status(403).json({ error: "Only staff and admin can delete announcements" });
+    }
+
+    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
+    const columnNames = columns.map((c) => c.Field);
+    const idColumn = columnNames.includes("announcement_id") ? "announcement_id" : "id";
+
+    const [existingRows] = await db.query<RowDataPacket[]>(
+      `SELECT ${idColumn} as announcement_id, ${columnNames.includes("user_id") ? "user_id" : "NULL as user_id"} FROM announcement WHERE ${idColumn} = ? LIMIT 1`,
+      [id]
+    );
+    if (!existingRows.length) {
+      return res.status(404).json({ error: "Announcement not found" });
+    }
+    if (Number(existingRows[0].user_id) !== Number(user_id)) {
+      return res.status(403).json({ error: "You can only delete your own announcement" });
+    }
+
+    await db.query(`DELETE FROM announcement WHERE ${idColumn} = ?`, [id]);
+    res.json({ message: "Announcement deleted successfully" });
+  } catch (error: unknown) {
+    console.error("Error deleting announcement:", error);
+    res.status(500).json({ error: "Error deleting announcement", details: error instanceof Error ? error.message : String(error) });
   }
 });
 

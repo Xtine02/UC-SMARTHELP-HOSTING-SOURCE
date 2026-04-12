@@ -3,10 +3,35 @@ import { useEffect, useRef } from "react";
 const ChatbotWidget = () => {
   const scriptRef = useRef<HTMLScriptElement | null>(null);
 
-  useEffect(() => {
+  const removeInjectedChatbotUi = () => {
+    const selectors = [
+      '[id*="flowise"]',
+      '[class*="flowise"]',
+      "flowise-chatbot",
+      'iframe[src*="flowise"]',
+      'iframe[id*="chatbot"]',
+      'iframe[class*="chatbot"]'
+    ];
+    const seen = new Set<Element>();
+    for (const selector of selectors) {
+      document.querySelectorAll(selector).forEach((el) => {
+        if (seen.has(el)) return;
+        seen.add(el);
+        el.remove();
+      });
+    }
+  };
+
+  const teardown = () => {
     if (scriptRef.current && scriptRef.current.parentNode) {
       scriptRef.current.parentNode.removeChild(scriptRef.current);
+      scriptRef.current = null;
     }
+    removeInjectedChatbotUi();
+  };
+
+  useEffect(() => {
+    teardown();
 
     const script = document.createElement("script");
     script.type = "module";
@@ -22,12 +47,12 @@ const ChatbotWidget = () => {
             backgroundColor: '#3B81F6',
             right: 20,
             bottom: 20,
-            size: 48,
+            size: 56,
             dragAndDrop: true,
             iconColor: 'white',
             customIconSrc: 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/svg/google-messages.svg',
             autoWindowOpen: {
-              autoOpen: true,
+              autoOpen: false,
               openDelay: 2,
               autoOpenOnMobile: false
             }
@@ -81,10 +106,14 @@ const ChatbotWidget = () => {
     document.body.appendChild(script);
     scriptRef.current = script;
 
+    const handleReset = () => teardown();
+    window.addEventListener("chatbot-reset", handleReset);
+    window.addEventListener("user-logout", handleReset);
+
     return () => {
-      if (scriptRef.current && scriptRef.current.parentNode) {
-        scriptRef.current.parentNode.removeChild(scriptRef.current);
-      }
+      window.removeEventListener("chatbot-reset", handleReset);
+      window.removeEventListener("user-logout", handleReset);
+      teardown();
     };
   }, []);
 

@@ -6,6 +6,7 @@ import ReviewAnalytics from "@/components/analytics/ReviewAnalytics";
 import AccountManagement from "@/components/admin/AccountManagement";
 import AuditTrail from "@/components/admin/AuditTrail";
 import Navbar from "@/components/Navbar";
+import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import {
   AlertDialog,
@@ -16,8 +17,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { ChevronDown } from "lucide-react";
+import { Download } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface Ticket {
   id: string;
@@ -82,6 +94,9 @@ const AdminDashboard = () => {
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [showDeptDialog, setShowDeptDialog] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"csv" | "pdf">("csv");
+  const [exportTab, setExportTab] = useState<"department" | "chatbot" | "accounts" | "feedback">("department");
   const { showConfirm, handleConfirmLeave, handleStayOnPage } = useBackConfirm(
     view !== "department" ? () => setView("department") : undefined
   );
@@ -178,9 +193,97 @@ const AdminDashboard = () => {
 
   const selectedDeptCount = filteredStats.reduce((sum, d) => sum + d.all, 0);
 
+  const downloadBlob = (content: BlobPart, filename: string, type: string) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportRowsByView = async (
+    targetTab: "department" | "chatbot" | "accounts" | "feedback"
+  ): Promise<{ title: string; headers: string[]; rows: string[][] }> => {
+    const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+    if (targetTab === "department") {
+      return {
+        title: "Department Analytics",
+        headers: ["Department", "All Tickets", "Pending", "In Progress", "Resolved"],
+        rows: filteredStats.map((d) => [
+          d.name,
+          String(d.all),
+          String(d.pending),
+          String(d.in_progress),
+          String(d.resolved),
+        ]),
+      };
+    }
+
+    if (targetTab === "accounts") {
+      const response = await fetch(`${API_URL}/api/users`);
+      const users = response.ok ? await response.json() : [];
+      return {
+        title: "User Management",
+        headers: ["ID", "First Name", "Last Name", "Email", "Role", "Department", "Status"],
+        rows: users.map((u: any) => [
+          String(u.id),
+          u.first_name || "",
+          u.last_name || "",
+          u.email || "",
+          u.role || "",
+          u.department || "N/A",
+          Number(u.is_disabled) === 1 ? "Disabled" : "Enabled",
+        ]),
+      };
+    }
+
+    if (targetTab === "feedback") {
+      const deptRes = await fetch(`${API_URL}/api/department-feedback`);
+      const deptData = deptRes.ok ? await deptRes.json() : [];
+      return {
+        title: "Feedback Analytics",
+        headers: ["Type", "Department", "Helpful", "Comment", "Date"],
+        rows: deptData.map((f: any) => [
+          "Department",
+          f.department || "",
+          f.is_helpful ? "Helpful" : "Not Helpful",
+          f.comment || "",
+          f.date_submitted || f.created_at || "",
+        ]),
+      };
+    }
+
+    return {
+      title: "Chatbot Analytics",
+      headers: ["Metric", "Value"],
+      rows: [["Status", "Coming soon"]],
+    };
+  };
+
+  const handleExport = async () => {
+    const { title, headers, rows } = await exportRowsByView(exportTab);
+    if (exportFormat === "csv") {
+      const escape = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+      const csv = [headers, ...rows]
+        .map((line) => line.map((cell) => escape(cell)).join(","))
+        .join("\n");
+      downloadBlob(csv, `${title.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.csv`, "text/csv;charset=utf-8;");
+    } else {
+      const doc = new jsPDF({ orientation: "landscape" });
+      doc.setFontSize(14);
+      doc.text(`${title} Export`, 14, 15);
+      autoTable(doc, { head: [headers], body: rows, startY: 22, styles: { fontSize: 9 } });
+      doc.save(`${title.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.pdf`);
+    }
+    setExportDialogOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
+      <ChatbotWidget />
 
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>
@@ -209,6 +312,47 @@ const AdminDashboard = () => {
                 <h1 className="text-3xl font-extrabold tracking-tight">Helpdesk Analytic</h1>
                 <p className="text-sm text-muted-foreground mt-1">Overview of ticket volume and department performance.</p>
               </div>
+              <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+                <DialogTrigger asChild>
+                  <button className="flex items-center gap-2 rounded-lg border border-muted/60 px-4 py-2 text-sm font-semibold hover:bg-muted/20">
+                    <Download className="h-4 w-4" />
+                    Export
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="max-w-sm">
+                  <DialogHeader>
+                    <DialogTitle>Export This Tab</DialogTitle>
+                    <DialogDescription>Choose file format then export and download.</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <Select
+                      value={exportTab}
+                      onValueChange={(v: "department" | "chatbot" | "accounts" | "feedback") => setExportTab(v)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="department">Department Analytics</SelectItem>
+                        <SelectItem value="chatbot">Chatbot Analytics</SelectItem>
+                        <SelectItem value="accounts">User Management</SelectItem>
+                        <SelectItem value="feedback">Feedback Analytics</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={exportFormat} onValueChange={(v: "csv" | "pdf") => setExportFormat(v)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="csv">CSV</SelectItem>
+                        <SelectItem value="pdf">PDF</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <button
+                      onClick={handleExport}
+                      className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
+                    >
+                      Export
+                    </button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-2">

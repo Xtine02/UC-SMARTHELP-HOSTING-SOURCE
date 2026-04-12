@@ -17,6 +17,7 @@ interface Ticket {
   department?: string;
   description?: string;
   acknowledge_at?: string | null;
+  resolved_at?: string | null;
   closed_at?: string | null;
   reopen_at?: string | null;
   departments?: { name: string } | null;
@@ -54,6 +55,7 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
   const [showFeedback, setShowFeedback] = useState(false);
   const [departments, setDepartments] = useState<{id: string | number, name: string}[]>([]);
   const [currentStatus, setCurrentStatus] = useState(ticket.status);
+  const [ticketData, setTicketData] = useState<Ticket>(ticket);
 
   const fetchMessages = async () => {
     try {
@@ -125,8 +127,14 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
       });
       
       if (response.ok) {
+        const payload = await response.json();
         toast({ title: `Ticket marked as ${newStatus}` });
-        setCurrentStatus(newStatus);
+        const nextStatus = payload?.ticket?.status || newStatus;
+        setCurrentStatus(nextStatus);
+        if (payload?.ticket) {
+          setTicketData((prev) => ({ ...prev, ...payload.ticket, status: nextStatus }));
+        }
+        onReplySuccess?.();
         
         // Show feedback dialog when ticket is marked as resolved by staff
         if (newStatus.toLowerCase() === "resolved" && isAdminOrStaff) {
@@ -163,6 +171,9 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
               : "in_progress";
 
             setCurrentStatus(normalizedStatus);
+            if (data.ticket) {
+              setTicketData((prev) => ({ ...prev, ...data.ticket, status: normalizedStatus }));
+            }
           }
         }
       } catch (error) {
@@ -171,11 +182,33 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
     }
   };
 
+  const markTicketAsReadForStudent = async () => {
+    if (!isStaff && !isAdmin && ticket?.id) {
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+        const response = await fetch(`${API_URL}/api/tickets/${ticket.id}/acknowledge`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, role: 'student' })
+        });
+
+        if (response.ok) {
+          console.log("Ticket marked as read for student");
+        }
+      } catch (error) {
+        console.error("Error marking ticket as read:", error);
+      }
+    }
+  };
+
   useEffect(() => {
     if (ticket?.id) {
       setCurrentStatus(ticket.status);
+      setTicketData(ticket);
       fetchMessages();
       fetchDepartments();
+      // Mark ticket as read for students when opened
+      markTicketAsReadForStudent();
     }
     // Removed polling - was causing resource exhaustion
     // Messages update through Supabase real-time subscriptions
@@ -301,11 +334,22 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
     }
   };
 
-  const senderName = ticket.profiles 
-    ? `${ticket.profiles.first_name || ""} ${ticket.profiles.last_name || ""}`.trim() 
-    : "Student";
+  const senderName =
+    ticket.full_name ||
+    `${ticket.first_name || ""} ${ticket.last_name || ""}`.trim() ||
+    (ticket.profiles ? `${ticket.profiles.first_name || ""} ${ticket.profiles.last_name || ""}`.trim() : "") ||
+    "Student";
     
   const deptName = ticket.department || ticket.departments?.name || "Department";
+  const resolvedOrClosedAt = ticketData.resolved_at || ticketData.closed_at;
+  const displayStatus =
+    currentStatus?.toLowerCase() === "in_progress"
+      ? "In-Progress"
+      : (currentStatus?.toLowerCase() === "resolved" || currentStatus?.toLowerCase() === "closed")
+      ? "Resolved/Closed"
+      : currentStatus?.toLowerCase() === "reopened"
+      ? "Reopened"
+      : "Pending";
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md px-4 py-6" onClick={onClose}>
@@ -317,7 +361,7 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
         <div className="sticky top-0 bg-background/90 backdrop-blur-md z-10 flex justify-between items-center px-8 py-6 border-b">
           <div>
             <h2 className="text-2xl font-black text-foreground uppercase italic tracking-tight">Ticket Details</h2>
-            <p className="text-xs font-bold text-primary tracking-widest uppercase">#{ticket.ticket_number || "Draft"}</p>
+            <p className="text-xs font-bold text-primary tracking-widest uppercase">#{ticketData.ticket_number || "Draft"}</p>
           </div>
           <Button variant="secondary" size="icon" onClick={onClose} className="rounded-full h-10 w-10 hover:rotate-90 transition-all duration-300">
             <X className="h-5 w-5" />
@@ -334,19 +378,37 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
             </div>
             <div className="p-4 bg-blue/5 rounded-2xl border">
               <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest block mb-1">Created At</span>
-              <span className="text-sm font-bold text-foreground">{format(new Date(ticket.created_at), "MMM d, yyyy h:mm a")}</span>
+              <span className="text-sm font-bold text-foreground">{format(new Date(ticketData.created_at), "MMM d, yyyy h:mm a")}</span>
             </div>
+            {ticketData.acknowledge_at && !ticketData.closed_at && (
+              <div className="p-4 bg-green/5 rounded-2xl border">
+                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest block mb-1">Acknowledged At</span>
+                <span className="text-sm font-bold text-green-700">{format(new Date(ticketData.acknowledge_at), "MMM d, yyyy h:mm a")}</span>
+              </div>
+            )}
+            {resolvedOrClosedAt && (
+              <div className="p-4 bg-red/5 rounded-2xl border">
+                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest block mb-1">Resolved/Closed At</span>
+                <span className="text-sm font-bold text-red-700">{format(new Date(resolvedOrClosedAt), "MMM d, yyyy h:mm a")}</span>
+              </div>
+            )}
+            {ticketData.reopen_at && (
+              <div className="p-4 bg-orange/5 rounded-2xl border">
+                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest block mb-1">Reopened At</span>
+                <span className="text-sm font-bold text-orange-700">{format(new Date(ticketData.reopen_at), "MMM d, yyyy h:mm a")}</span>
+              </div>
+            )}
           </div>
 
           {/* Status Display */}
           <div className={`p-4 rounded-2xl border text-center font-black uppercase tracking-[0.2em] text-xs ${
             currentStatus?.toLowerCase() === "pending" ? "bg-orange-50 text-orange-700 border-orange-200" :
             currentStatus?.toLowerCase() === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
-            currentStatus?.toLowerCase() === "resolved" ? "bg-green-50 text-green-700 border-green-200" :
+            (currentStatus?.toLowerCase() === "resolved" || currentStatus?.toLowerCase() === "closed") ? "bg-green-50 text-green-700 border-green-200" :
             currentStatus?.toLowerCase() === "reopened" ? "bg-pink-50 text-pink-700 border-pink-200" :
             "bg-gray-50 text-gray-700 border-gray-200"
           }`}>
-            Status: {currentStatus?.replace('_', ' ')}
+            Status: {displayStatus}
           </div>
 
           {/* Content */}
@@ -354,7 +416,7 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
             <div className="space-y-1">
               <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] ml-1">Concern Topic</span>
               <div className="text-xl font-extrabold text-foreground bg-secondary/20 p-4 rounded-2xl border-l-4 border-primary">
-                {ticket.subject}
+                {ticketData.subject}
               </div>
             </div>
           </div>
@@ -371,10 +433,10 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
                     {isStaff ? senderName : "You"} (Student)
                   </span>
                   <span className="text-[10px] text-muted-foreground font-bold">
-                    {format(new Date(ticket.created_at), "MMM d, h:mm a")}
+                    {format(new Date(ticketData.created_at), "MMM d, h:mm a")}
                   </span>
                 </div>
-                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{ticket.description || "No description provided."}</p>
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{ticketData.description || "No description provided."}</p>
               </div>
 
               {/* Subsequent Messages */}
@@ -382,7 +444,10 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
                 <div key={m.id} className={`border rounded-2xl p-5 shadow-sm ${m.role === 'staff' || m.role === 'admin' ? 'bg-emerald-50/50 ml-6' : 'bg-card mr-6'}`}>
                   <div className="flex justify-between items-center mb-3">
                     <span className={`text-xs font-bold ${m.role === 'staff' || m.role === 'admin' ? 'text-emerald-700' : 'text-primary'}`}>
-                      {m.first_name} {m.last_name} ({m.role?.toUpperCase()})
+                      {(!isAdminOrStaff && m.role === 'student')
+                        ? "You"
+                        : (`${m.first_name || ""} ${m.last_name || ""}`.trim() || "Student")
+                      } ({m.role?.toUpperCase()})
                     </span>
                     <span className="text-[10px] text-muted-foreground font-bold">
                       {m.created_at ? format(new Date(m.created_at), "MMM d, h:mm a") : "RECENT"}
@@ -485,7 +550,7 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
               ) : (
                 // Student view - show REPLY or REOPEN behavior
                 <>
-                  {currentStatus?.toLowerCase() === "resolved" ? (
+                  {(currentStatus?.toLowerCase() === "resolved" || currentStatus?.toLowerCase() === "closed") ? (
                     <Button 
                       onClick={() => handleStatusChange("reopened")} 
                       className="w-full py-8 text-xl font-black rounded-2xl shadow-xl hover:scale-[1.01] active:scale-[0.99] transition-all bg-orange-500 hover:bg-orange-600 text-white uppercase italic"

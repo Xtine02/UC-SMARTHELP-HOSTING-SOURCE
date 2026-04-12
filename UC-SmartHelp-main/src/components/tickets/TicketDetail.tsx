@@ -81,6 +81,21 @@ const TicketDetail = ({ ticket, onBack }: Props) => {
             <p className="text-sm text-muted-foreground mt-1">
               Created at: {format(new Date(ticket.created_at), "MMM d, yyyy h:mm a")}
             </p>
+            {(ticket.resolved_at || ticket.closed_at) && (
+              <p className="text-sm text-red-600 font-medium">
+                Resolved/Closed at: {format(new Date(ticket.resolved_at || ticket.closed_at), "MMM d, yyyy h:mm a")}
+              </p>
+            )}
+            {ticket.reopen_at && (
+              <p className="text-sm text-orange-600 font-medium">
+                Reopened at: {format(new Date(ticket.reopen_at), "MMM d, yyyy h:mm a")}
+              </p>
+            )}
+            {ticket.acknowledge_at && !ticket.closed_at && (
+              <p className="text-sm text-green-600 font-medium">
+                Acknowledged at: {format(new Date(ticket.acknowledge_at), "MMM d, yyyy h:mm a")}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-3 min-w-max">
             {isStaffOrAdmin ? (
@@ -118,7 +133,7 @@ const TicketDetail = ({ ticket, onBack }: Props) => {
         {/* Original message */}
         <div className="rounded-lg bg-secondary p-4">
           <p className="text-sm font-medium text-foreground">
-            From: {ticket.profiles?.first_name} {ticket.profiles?.last_name}
+            From: {isStaffOrAdmin ? `${ticket.profiles?.first_name} ${ticket.profiles?.last_name}` : "You"}
           </p>
           <p className="mt-2 text-foreground whitespace-pre-wrap">{ticket.description}</p>
         </div>
@@ -128,7 +143,7 @@ const TicketDetail = ({ ticket, onBack }: Props) => {
           {messages.map((m) => (
             <div key={m.id} className={`rounded-lg p-4 ${m.sender_id === ticket.sender_id ? "bg-secondary" : "bg-primary/10"}`}>
               <p className="text-xs font-medium text-muted-foreground mb-1">
-                {m.profiles?.first_name} {m.profiles?.last_name} • {format(new Date(m.created_at), "MMM d, yyyy h:mm a")}
+                {!isStaffOrAdmin ? "You" : `${m.profiles?.first_name} ${m.profiles?.last_name}`} • {format(new Date(m.created_at), "MMM d, yyyy h:mm a")}
               </p>
               <p className="text-foreground whitespace-pre-wrap">{m.content}</p>
             </div>

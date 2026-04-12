@@ -26,6 +26,7 @@ interface Ticket {
   has_unread_student_reply?: boolean;
   staff_acknowledge_at?: string | null;
   acknowledge_at?: string | null;
+  resolved_at?: string | null;
   closed_at?: string | null;
   reopen_at?: string | null;
   departments?: Department | null;
@@ -83,13 +84,12 @@ const normalizeStatus = (status: any) =>
     .replace(/[\s\-]+/g, '_')
     || 'pending';
 
-// Helper to check if ticket is new (unacknowledged) or has unread replies
+// Staff: highlight new tickets + unread student replies.
+// Students: highlight unread staff replies only.
 const isTicketNew = (ticket: Ticket, isStaffRole: boolean) => {
-  return ticket.has_unread_reply || (
-    isStaffRole 
-      ? !ticket.staff_acknowledge_at 
-      : !ticket.acknowledge_at
-  );
+  return isStaffRole
+    ? Boolean(ticket.has_unread_student_reply || ticket.has_unread_reply || !ticket.staff_acknowledge_at)
+    : Boolean(ticket.has_unread_staff_reply || ticket.has_unread_reply);
 };
 
 const TicketList = ({ departmentFilter }: Props) => {
@@ -306,6 +306,7 @@ const TicketList = ({ departmentFilter }: Props) => {
               ...(data.ticket || {}),
               status: normalizeStatus(normalizedStatus),
               has_unread_reply: false,
+              has_unread_student_reply: false,
               staff_acknowledge_at: new Date().toISOString(),
             };
 
@@ -322,7 +323,7 @@ const TicketList = ({ departmentFilter }: Props) => {
       return;
     }
 
-    if (t.has_unread_reply) {
+    if (t.has_unread_staff_reply || t.has_unread_reply) {
       try {
         const acknowledgeResponse = await fetch(`${API_URL}/api/tickets/${t.id}/acknowledge`, {
           method: "PATCH",
@@ -332,9 +333,11 @@ const TicketList = ({ departmentFilter }: Props) => {
 
         if (acknowledgeResponse.ok) {
           setTickets((prev) => prev.map((ticket) =>
-            ticket.id === t.id ? { ...ticket, has_unread_reply: false, acknowledge_at: new Date().toISOString() } : ticket
+            ticket.id === t.id
+              ? { ...ticket, has_unread_reply: false, has_unread_staff_reply: false, acknowledge_at: new Date().toISOString() }
+              : ticket
           ));
-          setSelectedTicket({ ...t, has_unread_reply: false });
+          setSelectedTicket({ ...t, has_unread_reply: false, has_unread_staff_reply: false });
           return;
         }
       } catch (error) {
@@ -454,7 +457,7 @@ const TicketList = ({ departmentFilter }: Props) => {
                   {sortedAndFilteredTickets.length} total
                 </span>
                 {(() => {
-                  const newCount = sortedAndFilteredTickets.filter(t => isTicketNew(t, isStaffOrAdmin)).length;
+                  const newCount = sortedAndFilteredTickets.filter(t => isTicketNew(t, isStaff)).length;
                   return newCount > 0 ? (
                     <span className="text-amber-600 flex items-center gap-2">
                       <span className="w-2 h-2 bg-amber-600 rounded-full animate-pulse"></span>
@@ -482,7 +485,7 @@ const TicketList = ({ departmentFilter }: Props) => {
                 <SortButton label="STATUS" sortKey="status" />
                 <SortButton label="DATE CREATED" sortKey="created_at" />
                 <SortButton label="ACKNOWLEDGED" sortKey="acknowledge_at" />
-                <SortButton label="CLOSED" sortKey="closed_at" />
+                <SortButton label="RESOLVED/CLOSED" sortKey="closed_at" />
                 <SortButton label="REOPENED" sortKey="reopen_at" />
               </TableRow>
             </TableHeader>
@@ -498,8 +501,8 @@ const TicketList = ({ departmentFilter }: Props) => {
                   <TableRow
                     key={t.id} 
                     className={`cursor-pointer transition-all ${selectedIds.has(t.id) ? 'bg-destructive/10 border-l-4 border-destructive' : ''} ${
-                      isStaffOrAdmin && isTicketNew(t, isStaffOrAdmin)
-                        ? 'bg-amber-50/80 hover:bg-amber-50 border-l-4 border-amber-400 font-semibold text-amber-900' 
+                      isTicketNew(t, isStaff)
+                        ? 'bg-amber-50/80 hover:bg-amber-50 border-l-4 border-amber-400 font-semibold text-amber-900 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700' 
                         : 'hover:bg-muted/50 border-l-4 border-transparent'
                     }`} 
                     onClick={() => handleTicketClick(t)}
@@ -528,7 +531,7 @@ const TicketList = ({ departmentFilter }: Props) => {
                       {t.acknowledge_at ? format(new Date(t.acknowledge_at), "MMM d, yyyy") : "-"}
                     </TableCell>
                     <TableCell className="text-sm">
-                      {t.closed_at ? format(new Date(t.closed_at), "MMM d, yyyy") : "-"}
+                      {(t.resolved_at || t.closed_at) ? format(new Date(t.resolved_at || t.closed_at), "MMM d, yyyy") : "-"}
                     </TableCell>
                     <TableCell className="text-sm">
                       {t.reopen_at ? format(new Date(t.reopen_at), "MMM d, yyyy") : "-"}

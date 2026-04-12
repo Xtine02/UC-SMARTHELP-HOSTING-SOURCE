@@ -55,8 +55,8 @@ const WebsiteFeedbackDialog = ({ open, onClose, onSubmitted }: Props) => {
           title: "Feedback Submitted!", 
           description: "Your input helps us improve University of Cebu services." 
         });
-        // Mark feedback as shown to prevent showing again until next login
-        localStorage.setItem("website_feedback_shown_session", "true");
+        // Mark feedback as shown for the current browser tab session.
+        sessionStorage.setItem("website_feedback_shown_session", "true");
         setHelpful(null);
         setComment("");
         handleClose();
@@ -78,8 +78,8 @@ const WebsiteFeedbackDialog = ({ open, onClose, onSubmitted }: Props) => {
   };
 
   const handleClose = () => {
-    // Mark feedback as shown to prevent showing again until next login
-    localStorage.setItem("website_feedback_shown_session", "true");
+    // Mark feedback as shown for the current browser tab session.
+    sessionStorage.setItem("website_feedback_shown_session", "true");
     onClose();
   };
 

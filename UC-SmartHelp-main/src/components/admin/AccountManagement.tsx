@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type FormEvent } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,17 +11,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2 } from "lucide-react";
+import { UserPlus } from "lucide-react";
 
 interface User {
   id: number;
@@ -30,17 +21,17 @@ interface User {
   email: string;
   role: string;
   department: string | null;
+  is_disabled?: number;
+  image?: string | null;
 }
-
-const availableRoles = ["student", "staff", "admin"];
 
 const AccountManagement = () => {
   const { toast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [newUser, setNewUser] = useState({
     first_name: "",
     last_name: "",
@@ -94,67 +85,31 @@ const AccountManagement = () => {
     // Users will be updated on create/update/delete instead
   }, [fetchUsers]);
 
-  const handleUpdate = async (userId: number, role: string, department: string | null) => {
+  const handleToggleDisable = async (userId: number, disableUser: boolean) => {
     try {
       const response = await fetch(`${API_URL}/api/users/${userId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, department }),
+        body: JSON.stringify({ is_disabled: disableUser }),
       });
-      if (!response.ok) throw new Error("Failed to update user");
-      toast({ title: "User updated successfully" });
-      fetchUsers();
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      toast({ variant: "destructive", title: "Update Failed", description: errorMessage });
-    }
-  };
-
-  const toggleSelect = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedIds.size === users.length) {
-      setSelectedIds(new Set());
-      return;
-    }
-    setSelectedIds(new Set(users.map((u) => u.id)));
-  };
-
-  const handleDeleteSelected = async () => {
-    if (selectedIds.size === 0) return;
-    
-    try {
-      for (const id of Array.from(selectedIds)) {
-        const response = await fetch(`${API_URL}/api/users/${id}`, { 
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" }
-        });
-        
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(err.error || 'Failed to delete user');
-        }
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || errorData.details || "Failed to update account status");
       }
-      
-      // Optimistic UI update
-      setUsers((prev) => prev.filter((u) => !selectedIds.has(u.id)));
-      setSelectedIds(new Set());
-      setShowDeleteConfirm(false);
-      toast({ title: "Users deleted successfully" });
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, is_disabled: disableUser ? 1 : 0 } : u))
+      );
+      setSelectedUser((prev) =>
+        prev && prev.id === userId ? { ...prev, is_disabled: disableUser ? 1 : 0 } : prev
+      );
+      toast({ title: disableUser ? "User disabled" : "User enabled" });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      toast({ variant: "destructive", title: "Delete Failed", description: errorMessage });
+      toast({ variant: "destructive", title: "Status Update Failed", description: errorMessage });
     }
   };
 
-  const handleCreateUser = async (e: React.FormEvent) => {
+  const handleCreateUser = async (e: FormEvent) => {
     e.preventDefault();
     if (!newUser.first_name || !newUser.last_name || !newUser.email || !newUser.password) {
       toast({ variant: "destructive", title: "Error", description: "Please fill in all required fields" });
@@ -209,14 +164,15 @@ const AccountManagement = () => {
     <div className="space-y-4 pt-4">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-xl font-bold text-foreground">Account Management</h2>
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-          <DialogTrigger asChild>
-            <button className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90">
-              <UserPlus className="h-4 w-4" />
-              Create User
-            </button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
+        <div className="flex items-center gap-2">
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+            <DialogTrigger asChild>
+              <button className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90">
+                <UserPlus className="h-4 w-4" />
+                Create User
+              </button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Create New User</DialogTitle>
               <DialogDescription>Add a new staff or admin user to the system.</DialogDescription>
@@ -302,51 +258,10 @@ const AccountManagement = () => {
                 </button>
               </div>
             </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-destructive/10 p-4 rounded-xl border border-destructive/20 animate-in slide-in-from-top-4">
-          <span className="text-sm font-bold text-destructive">
-            {selectedIds.size} user{selectedIds.size === 1 ? "" : "s"} selected
-          </span>
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setSelectedIds(new Set())}
-              className="flex items-center gap-2 bg-secondary text-secondary-foreground px-4 py-2 rounded-lg font-bold text-xs hover:bg-secondary/80 transition-all shadow-lg active:scale-95"
-            >
-              CANCEL
-            </button>
-            <button 
-              onClick={() => setShowDeleteConfirm(true)}
-              className="flex items-center gap-2 bg-destructive text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-destructive/90 transition-all shadow-lg active:scale-95"
-            >
-              <Trash2 className="h-4 w-4" />
-              DELETE SELECTED
-            </button>
-          </div>
+            </DialogContent>
+          </Dialog>
         </div>
-      )}
-
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Users?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to permanently delete {selectedIds.size} selected user{selectedIds.size === 1 ? "" : "s"}? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex gap-3 justify-end">
-            <AlertDialogCancel onClick={() => setShowDeleteConfirm(false)}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteSelected} className="bg-destructive hover:bg-destructive/90">
-              Yes, Delete
-            </AlertDialogAction>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
+      </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
         {loading ? (
@@ -361,28 +276,24 @@ const AccountManagement = () => {
           <Table>
             <TableHeader>
               <TableRow className="bg-secondary">
-                <TableHead className="w-[60px] text-center">
-                  <Checkbox
-                    checked={selectedIds.size === users.length && users.length > 0}
-                    onCheckedChange={toggleSelectAll}
-                  />
-                </TableHead>
                 <TableHead>Last Name</TableHead>
                 <TableHead>First Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Department</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="text-center">
-                    <Checkbox
-                      checked={selectedIds.has(u.id)}
-                      onCheckedChange={() => toggleSelect(u.id)}
-                    />
-                  </TableCell>
+                <TableRow
+                  key={u.id}
+                  className="cursor-pointer hover:bg-muted/30"
+                  onClick={() => {
+                    setSelectedUser(u);
+                    setDetailsOpen(true);
+                  }}
+                >
                   <TableCell>{u.last_name}</TableCell>
                   <TableCell>{u.first_name}</TableCell>
                   <TableCell>{u.email}</TableCell>
@@ -400,12 +311,90 @@ const AccountManagement = () => {
                       </span>
                     )}
                   </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${
+                        Number(u.is_disabled) === 1
+                          ? "bg-red-100 text-red-700"
+                          : "bg-green-100 text-green-700"
+                      }`}
+                    >
+                      {Number(u.is_disabled) === 1 ? "Disabled" : "Enabled"}
+                    </span>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
       </div>
+
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>User Details</DialogTitle>
+            <DialogDescription>Manage account details and access for this user.</DialogDescription>
+          </DialogHeader>
+          {selectedUser && (
+            <div className="space-y-6">
+              <div className="rounded-xl border p-5">
+                <div className="flex flex-col gap-5 md:flex-row md:items-start">
+                  <div className="h-28 w-28 overflow-hidden rounded-full border bg-muted/20">
+                    {selectedUser.image ? (
+                      <img
+                        src={selectedUser.image}
+                        alt={`${selectedUser.first_name} ${selectedUser.last_name}`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xl font-semibold text-muted-foreground">
+                        {selectedUser.first_name?.[0] || "U"}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid flex-1 grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <p className="text-muted-foreground">First Name</p>
+                      <p className="font-semibold">{selectedUser.first_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Last Name</p>
+                      <p className="font-semibold">{selectedUser.last_name}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-muted-foreground">Email</p>
+                      <p className="font-semibold break-all">{selectedUser.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Password</p>
+                      <p className="font-semibold tracking-widest">********</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Role</p>
+                      <p className="font-semibold capitalize">{selectedUser.role}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-muted-foreground">Department</p>
+                      <p className="font-semibold">{selectedUser.department || "N/A"}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-3 rounded-lg border p-4">
+                <Checkbox
+                  checked={Number(selectedUser.is_disabled) === 1}
+                  onCheckedChange={(checked) => handleToggleDisable(selectedUser.id, Boolean(checked))}
+                />
+                <span className="text-sm font-medium md:text-base">
+                  Disable this account (user cannot log in while disabled)
+                </span>
+              </label>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

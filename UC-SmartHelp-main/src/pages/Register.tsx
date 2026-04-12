@@ -87,7 +87,7 @@ const Register = () => {
   const handleClose = () => {
     const isGuest = localStorage.getItem("uc_guest") === "1";
     if (isGuest) {
-      navigate("/studentdashboard");
+      navigate("/GuestDashboard");
     } else {
       navigate("/");
     }

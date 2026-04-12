@@ -7,7 +7,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
 // MySQL connection pool
@@ -22,6 +22,31 @@ const db = mysql.createPool({
 db.getConnection()
   .then(() => { /* Success */ })
   .catch(err => { /* Error suppressed */ });
+
+const initializeDatabase = async () => {
+  const connection = await db.getConnection();
+  try {
+    const [userColumns] = await connection.query("SHOW COLUMNS FROM users");
+    const userColumnNames = userColumns.map((c) => c.Field);
+    if (!userColumnNames.includes('is_disabled')) {
+      await connection.query("ALTER TABLE users ADD COLUMN is_disabled TINYINT(1) DEFAULT 0");
+    }
+
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS website_feedback (
+        web_feedback_id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        is_helpful BOOLEAN NOT NULL,
+        comment TEXT,
+        date_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } finally {
+    connection.release();
+  }
+};
+
+initializeDatabase().catch(() => {});
 
 // Authentication routes
 app.post('/api/register', async (req, res) => {
@@ -62,6 +87,9 @@ app.post('/api/login', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
     const user = rows[0];
+    if (user && Number(user.is_disabled) === 1) {
+      return res.status(403).json({ error: "Account disabled" });
+    }
     if (user && user.password && await bcrypt.compare(password, user.password)) {
       res.json({
         id: user.id,
@@ -81,17 +109,20 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/google-auth', async (req, res) => {
-  const { email, firstName, lastName } = req.body;
+  const { email, firstName, lastName, profileImage } = req.body;
   try {
     const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
     let user = rows[0];
 
     if (!user) {
       const [result] = await db.query(
-        'INSERT INTO users (first_name, last_name, email, role) VALUES (?, ?, ?, ?)',
-        [firstName, lastName, email, 'student']
+        'INSERT INTO users (first_name, last_name, email, role, image) VALUES (?, ?, ?, ?, ?)',
+        [firstName, lastName, email, 'student', profileImage || null]
       );
-      user = { id: result.insertId, first_name: firstName, last_name: lastName, email, role: 'student' };
+      user = { id: result.insertId, first_name: firstName, last_name: lastName, email, role: 'student', image: profileImage || null };
+    } else if ((!user.image || String(user.image).trim() === '') && typeof profileImage === 'string' && profileImage.trim() !== '') {
+      await db.query('UPDATE users SET image = ? WHERE id = ?', [profileImage, user.id]);
+      user.image = profileImage;
     }
 
     res.json({ 
@@ -101,7 +132,9 @@ app.post('/api/google-auth', async (req, res) => {
       fullName: `${user.first_name} ${user.last_name}`, 
       firstName: user.first_name, 
       lastName: user.last_name, 
-      email: user.email 
+      email: user.email,
+      image: user.image || null,
+      profileImage: user.image || null
     });
   } catch (error) {
     res.status(500).json({ error: "Google Auth error", details: error.message });
@@ -163,7 +196,7 @@ app.post('/api/website-feedback', async (req, res) => {
     }
 
     const [result] = await db.query(
-      'INSERT INTO website_feedback (user_id, is_helpful, comment) VALUES (?, ?, ?)',
+      'INSERT INTO website_feedback (user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, NOW())',
       [user_id || null, is_helpful, comment || null]
     );
 
@@ -195,11 +228,34 @@ app.get('/api/website-feedback', async (req, res) => {
 // User management endpoints (support id/user_id schema)
 app.patch('/api/users/:id', async (req, res) => {
   const { id } = req.params;
-  const { role, department } = req.body;
+  const { role, department, is_disabled } = req.body;
   try {
+    const [columns] = await db.query("SHOW COLUMNS FROM users");
+    const columnNames = columns.map((c) => c.Field);
+    const idColumn = columnNames.includes("id") ? "id" : (columnNames.includes("user_id") ? "user_id" : "id");
+
+    const updates = [];
+    const values = [];
+    if (typeof role !== "undefined") {
+      updates.push("role = ?");
+      values.push(role);
+    }
+    if (typeof department !== "undefined") {
+      updates.push("department = ?");
+      values.push(department || null);
+    }
+    if (typeof is_disabled !== "undefined") {
+      updates.push("is_disabled = ?");
+      values.push(Number(Boolean(is_disabled)));
+    }
+    if (!updates.length) {
+      return res.status(400).json({ error: "No valid fields provided for update" });
+    }
+
+    values.push(id);
     const [result] = await db.query(
-      'UPDATE users SET role = ?, department = ? WHERE user_id = ?',
-      [role, department || null, id]
+      `UPDATE users SET ${updates.join(', ')} WHERE ${idColumn} = ?`,
+      values
     );
 
     if (result.affectedRows === 0) {

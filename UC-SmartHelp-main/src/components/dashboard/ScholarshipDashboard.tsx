@@ -7,6 +7,7 @@ import { format } from "date-fns";
 import TicketDetailModal from "@/components/tickets/TicketDetailModal";
 
 import Navbar from "@/components/Navbar";
+import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import { ArrowUpDown, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,7 +33,8 @@ const normalizeStatus = (status: any) =>
 
 // Helper to check if ticket is new (unacknowledged) for scholarship staff
 const isStaffTicketNew = (ticket: Ticket): boolean => {
-  return !ticket.acknowledge_at;
+  // Staff should see highlight for newly created tickets and unread student replies.
+  return Boolean(ticket.has_unread_student_reply || ticket.has_unread_reply || !ticket.staff_acknowledge_at || !ticket.acknowledge_at);
 };
 
 interface Ticket {
@@ -45,6 +47,9 @@ interface Ticket {
   user_id: string;
   description: string;
   acknowledge_at?: string | null;
+  staff_acknowledge_at?: string | null;
+  has_unread_reply?: boolean;
+  has_unread_student_reply?: boolean;
   first_name?: string;
   last_name?: string;
   full_name?: string;
@@ -312,6 +317,7 @@ const ScholarshipDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
+      <ChatbotWidget />
 
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>
@@ -422,8 +428,17 @@ const ScholarshipDashboard = () => {
 
             <div className="flex justify-between items-center px-2">
               <h2 className="text-xl font-black text-foreground uppercase tracking-tight italic">Scholarship Tickets</h2>
-              <span className="text-xs font-bold text-muted-foreground bg-muted px-3 py-1 rounded-full">
-                {tickets.length} TOTAL
+              <span className="text-xs font-bold text-muted-foreground bg-muted px-3 py-1 rounded-full flex items-center gap-3">
+                {tickets.length} total
+                {(() => {
+                  const newCount = sortedTickets.filter(t => isStaffTicketNew(t)).length;
+                  return newCount > 0 ? (
+                    <span className="text-amber-600 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-amber-600 rounded-full animate-pulse"></span>
+                      {newCount} new
+                    </span>
+                  ) : null;
+                })()}
               </span>
             </div>
             
@@ -457,7 +472,7 @@ const ScholarshipDashboard = () => {
                         key={t.id} 
                         className={`cursor-pointer transition-all ${selectedIds.has(t.id) ? 'bg-destructive/5 border-l-4 border-destructive' : ''} ${
                           isStaffRole && isStaffTicketNew(t)
-                            ? 'bg-amber-50/80 hover:bg-amber-50 border-l-4 border-amber-400 font-semibold text-amber-900' 
+                            ? 'bg-amber-50/80 hover:bg-amber-50 border-l-4 border-amber-400 font-semibold text-amber-900 dark:bg-amber-900/20 dark:hover:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700' 
                             : 'hover:bg-emerald-50/50 border-l-4 border-transparent'
                         }`}
                         onClick={() => handleTicketClick(t)}

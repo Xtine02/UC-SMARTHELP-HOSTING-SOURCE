@@ -1,19 +1,23 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Navigate, useLocation } from "react-router-dom";
-import { Camera, Lock, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Camera, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useTheme } from "next-themes";
 const Settings = () => {
+  const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -23,7 +27,13 @@ const Settings = () => {
   const [lastName, setLastName] = useState("");
   const [saving, setSaving] = useState(false);
   const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [imageChanged, setImageChanged] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
 
   // Password Modal States
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -35,21 +45,44 @@ const Settings = () => {
 
   const location = useLocation();
 
+  const getUserThemeKey = (userObj: any) => {
+    const uid = userObj?.userId || userObj?.id || userObj?.user_id;
+    return uid ? `theme_user_${uid}` : null;
+  };
+
   useEffect(() => {
-    const savedUser = localStorage.getItem("user");
-    if (savedUser) {
-      try {
+    let mounted = true;
+    try {
+      const savedUser = localStorage.getItem("user");
+      if (savedUser) {
         const parsedUser = JSON.parse(savedUser);
+        if (!mounted) return;
         setUser(parsedUser);
-        setFirstName(parsedUser.firstName || "");
-        setLastName(parsedUser.lastName || "");
-        setProfileImage(parsedUser.profileImage || null);
-      } catch (e) {
-        console.error("Settings: Failed to parse user", e);
+        setFirstName(parsedUser.firstName || parsedUser.first_name || "");
+        setLastName(parsedUser.lastName || parsedUser.last_name || "");
+        setProfileImage(parsedUser.profileImage || parsedUser.profile_image || parsedUser.image || null);
       }
+    } catch (e) {
+      console.error("Settings: Failed to parse user", e);
+      if (mounted) setUser(null);
+    } finally {
+      if (mounted) setLoading(false);
     }
-    setLoading(false);
+
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = getUserThemeKey(user);
+    if (!key) return;
+    const savedTheme = localStorage.getItem(key);
+    if (savedTheme === "dark" || savedTheme === "light") {
+      setTheme(savedTheme);
+    }
+  }, [user, setTheme]);
 
   useEffect(() => {
     if (location.hash === "#audit-trail") {
@@ -60,8 +93,34 @@ const Settings = () => {
     }
   }, [location.hash]);
 
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
+
   if (loading) return null;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navbar />
+        <div className="container max-w-xl py-16">
+          <div className="rounded-2xl border bg-card p-8 text-center space-y-4">
+            <h2 className="text-2xl font-bold">Account Settings</h2>
+            <p className="text-muted-foreground">Session not found. Please log in again to open settings.</p>
+            <Button onClick={() => navigate("/login")} className="uc-gradient-btn text-primary-foreground">
+              Go to Login
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Password Validation Logic
   const validatePassword = (pass: string) => {
@@ -74,16 +133,104 @@ const Settings = () => {
   const passCriteria = validatePassword(newPassword);
   const isPassValid = passCriteria.hasCapital && passCriteria.hasNumber && passCriteria.isLongEnough;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const compressImage = (base64String: string, callback: (compressed: string) => void) => {
+    const img = new Image();
+    img.src = base64String;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      const maxSize = 420;
+      if (width > height) {
+        if (width > maxSize) {
+          height = (height * maxSize) / width;
+          width = maxSize;
+        }
+      } else {
+        if (height > maxSize) {
+          width = (width * maxSize) / height;
+          height = maxSize;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.55);
+        callback(compressed);
+      }
+    };
+  };
+
+  const applySelectedImage = (imageData: string) => {
+    // Compress image if it's too large
+    if (imageData.length > 250000) {
+      compressImage(imageData, (compressed) => {
+        setProfileImage(compressed);
+        setImageChanged(true);
+        toast({ title: "Profile photo changed!" });
+      });
+    } else {
+      setProfileImage(imageData);
+      setImageChanged(true);
+      toast({ title: "Profile photo changed!" });
+    }
+  };
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setProfileImage(reader.result as string);
-        toast({ title: "Photo updated locally!" });
+        const imageData = reader.result as string;
+        applySelectedImage(imageData);
       };
       reader.readAsDataURL(file);
     }
+    e.target.value = "";
+  };
+
+  const openCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast({ title: "Camera not supported", description: "This device/browser does not support camera access.", variant: "destructive" });
+      return;
+    }
+    setCameraLoading(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      // Let dialog mount first
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          void videoRef.current.play();
+        }
+      }, 50);
+    } catch (error) {
+      toast({ title: "Cannot open camera", description: "Please allow camera permission and try again.", variant: "destructive" });
+    } finally {
+      setCameraLoading(false);
+    }
+  };
+
+  const takePhotoFromCamera = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const snapshot = canvas.toDataURL("image/jpeg", 0.75);
+    applySelectedImage(snapshot);
+    stopCamera();
+    setCameraOpen(false);
   };
 
   const handleSaveProfile = async () => {
@@ -96,30 +243,36 @@ const Settings = () => {
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
     try {
+      if (imageChanged && profileImage && profileImage.length > 2_000_000) {
+        throw new Error("Profile picture is too large. Please choose a smaller image.");
+      }
+
       const response = await fetch(`${API_URL}/api/update-profile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: user.userId || user.id,
+          userId: user.userId || user.id || user.user_id,
           firstName,
-          lastName
+          lastName,
+          profileImage: imageChanged ? (profileImage || null) : undefined
         }),
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to update profile");
+      if (!response.ok) throw new Error(data.details || data.error || "Failed to update profile");
 
       // Update local storage with the new data from server
       const updatedUser = { 
         ...user, 
         ...data,
-        profileImage // Keep the local profile image for now as it's not in DB
+        profileImage: data.profileImage || data.profile_image || data.image || profileImage
       };
       localStorage.setItem("user", JSON.stringify(updatedUser));
       setUser(updatedUser);
+      setImageChanged(false);
       window.dispatchEvent(new CustomEvent('profile-updated', { detail: updatedUser }));
       
-      toast({ title: "Profile saved successfully!", description: "Your changes have been updated in our database." });
+      toast({ title: "Profile saved successfully!", description: "Your changes have been updated." });
     } catch (error: any) {
       toast({ variant: "destructive", title: "Update Failed", description: error.message });
     } finally {
@@ -158,7 +311,16 @@ const Settings = () => {
     }
   };
 
-  const initial = (firstName?.[0] || user.fullName?.[0] || "U").toUpperCase();
+  const initial = ((firstName?.[0] || "") + (lastName?.[0] || "") || "U").toUpperCase();
+
+  const handleThemeToggle = (checked: boolean) => {
+    const nextTheme = checked ? "dark" : "light";
+    setTheme(nextTheme);
+    const key = getUserThemeKey(user);
+    if (key) {
+      localStorage.setItem(key, nextTheme);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -173,20 +335,32 @@ const Settings = () => {
         <div className="rounded-3xl border bg-card p-8 shadow-xl space-y-8">
           {/* Profile Photo */}
           <div className="flex flex-col items-center gap-4 py-4 border-b">
-            <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div className="relative group">
               <div className="h-32 w-32 rounded-full border-4 border-primary/20 bg-secondary flex items-center justify-center overflow-hidden transition-all group-hover:border-primary">
                 {profileImage ? (
-                  <img src={profileImage} alt="Profile" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setImagePreviewOpen(true)}
+                    className="h-full w-full"
+                    aria-label="Preview profile picture"
+                  >
+                    <img src={profileImage} alt="Profile" className="h-full w-full object-cover cursor-zoom-in" />
+                  </button>
                 ) : (
                   <span className="text-4xl font-black text-primary">{initial}</span>
                 )}
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Camera className="text-white h-8 w-8" />
-                </div>
               </div>
-              <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
             </div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Change Photo</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+                Upload Photo
+              </Button>
+              <Button type="button" variant="outline" onClick={openCamera} disabled={cameraLoading}>
+                <Camera className="h-4 w-4 mr-2" />
+                {cameraLoading ? "Opening..." : "Use Camera"}
+              </Button>
+            </div>
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
           </div>
 
           <div className="grid gap-6 sm:grid-cols-2">
@@ -201,6 +375,24 @@ const Settings = () => {
           </div>
 
           <div className="space-y-6">
+            <div className="space-y-2">
+              <Label className="text-xs font-black uppercase tracking-widest ml-1">Theme</Label>
+              <div className="flex items-center justify-between rounded-xl border-2 bg-muted/20 px-4 py-3">
+                <span className="text-sm font-semibold text-foreground">
+                  {theme === "dark" ? "Dark Mode" : "Light Mode"}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Light</span>
+                  <Switch
+                    checked={theme === "dark"}
+                    onCheckedChange={handleThemeToggle}
+                    aria-label="Toggle dark mode"
+                  />
+                  <span className="text-xs text-muted-foreground">Dark</span>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label className="text-xs font-black uppercase tracking-widest ml-1">Email</Label>
               <Input value={user.email || "N/A"} disabled className="h-12 rounded-xl bg-muted/50 border-2" />
@@ -294,6 +486,57 @@ const Settings = () => {
             >
               {passLoading ? "UPDATING..." : "UPDATE PASSWORD"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={cameraOpen}
+        onOpenChange={(open) => {
+          if (!open) stopCamera();
+          setCameraOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Take Profile Photo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-xl border bg-black">
+              <video ref={videoRef} className="h-[320px] w-full object-cover" playsInline muted autoPlay />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  stopCamera();
+                  setCameraOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={takePhotoFromCamera}>
+                Capture Photo
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={imagePreviewOpen} onOpenChange={setImagePreviewOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Profile Picture</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center justify-center">
+            {profileImage ? (
+              <img
+                src={profileImage}
+                alt="Profile preview"
+                className="max-h-[70vh] w-auto rounded-xl object-contain"
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

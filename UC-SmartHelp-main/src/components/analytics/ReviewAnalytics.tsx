@@ -378,8 +378,8 @@ const ReviewAnalytics = ({ department, userDepartment, userRole }: ReviewAnalyti
         </div>
       )}
 
-      {/* Website Feedback Chart - always show for admins below department feedback */}
-      {userRole?.toLowerCase() !== "staff" && (() => {
+      {/* Website Feedback Chart - show only when website/all filter is active */}
+      {userRole?.toLowerCase() !== "staff" && (feedbackType === "all" || feedbackType === "website") && (() => {
         const websiteHelpData = [
           { name: "Helpful", value: websiteFeedback.filter(f => f.is_helpful).length, color: "#22c55e" },
           { name: "Not Helpful", value: websiteFeedback.filter(f => !f.is_helpful).length, color: "#ea580c" },
@@ -427,24 +427,24 @@ const ReviewAnalytics = ({ department, userDepartment, userRole }: ReviewAnalyti
                 : `${getDisplayDeptName(selectedDeptName)} Feedback Details (${feedbackToDisplay.length})`
           }
         </h3>
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <Table className="table-fixed">
+        <div className="rounded-xl border bg-card overflow-x-auto">
+          <Table className="min-w-[900px] table-fixed">
             <colgroup>
               {!department && userRole?.toLowerCase() !== "staff" && <col style={{ width: 120 }} />}
               {!department && userRole?.toLowerCase() !== "staff" && <col style={{ width: 200 }} />}
               <col style={{ width: 150 }} />
-              <col style={{ width: "minmax(220px, 1fr)" }} />
+              <col style={{ width: 360 }} />
               <col style={{ width: 180 }} />
             </colgroup>
-            <TableHead>
+            <TableHeader>
               <TableRow className="bg-muted/50">
                 {!department && userRole?.toLowerCase() !== "staff" && <TableHead className="font-bold min-w-[120px] w-[120px] px-3 whitespace-nowrap">Type</TableHead>}
                 {!department && userRole?.toLowerCase() !== "staff" && <TableHead className="font-bold min-w-[200px] w-[200px] px-3 whitespace-nowrap">Department</TableHead>}
                 <TableHead className="font-bold min-w-[150px] w-[150px] px-3 whitespace-nowrap">Feedback</TableHead>
-                <TableHead className="font-bold min-w-[220px] w-[40%] px-3 whitespace-nowrap">Comment</TableHead>
+                <TableHead className="font-bold min-w-[360px] w-[360px] px-3 whitespace-nowrap">Comment</TableHead>
                 <TableHead className="font-bold min-w-[180px] w-[180px] px-3 whitespace-nowrap text-right">Date</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {feedbackToDisplay.length === 0 ? (
                 <TableRow>
@@ -472,7 +472,7 @@ const ReviewAnalytics = ({ department, userDepartment, userRole }: ReviewAnalyti
                           {helpful ? "Helpful" : "Not Helpful"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="w-[40%] align-top max-w-[60ch] break-words">{f.comment || "—"}</TableCell>
+                      <TableCell className="w-[360px] align-top whitespace-normal break-words">{f.comment || "—"}</TableCell>
                       <TableCell className="w-[180px] text-sm text-muted-foreground align-top text-right">
                         {formatDateSafe(f.date_submitted, f.created_at)}
                       </TableCell>

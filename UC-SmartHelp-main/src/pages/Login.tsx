@@ -35,6 +35,15 @@ const Login = () => {
     return "/StudentDashboard";
   };
 
+  const applyThemeForUser = (userData: any) => {
+    const uid = userData?.userId || userData?.id || userData?.user_id;
+    const key = uid ? `theme_user_${uid}` : null;
+    const savedTheme = key ? localStorage.getItem(key) : null;
+    const nextTheme = savedTheme === "dark" ? "dark" : "light";
+    localStorage.setItem("theme", nextTheme);
+    document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  };
+
   // --- GOOGLE LOGIN LOGIC ---
   const handleGoogleLogin = async () => {
     if (loading) return;
@@ -54,7 +63,8 @@ const Login = () => {
         body: JSON.stringify({
           email: gUser.email,
           firstName: firstName,
-          lastName: lastName
+          lastName: lastName,
+          profileImage: gUser.photoURL || null
         }),
       });
 
@@ -70,6 +80,7 @@ const Login = () => {
 
       localStorage.removeItem('uc_guest');
       localStorage.setItem("user", JSON.stringify(data));
+      applyThemeForUser(data);
 
       // Reset chatbot on new login session
       window.dispatchEvent(new Event('profile-updated'));
@@ -141,6 +152,7 @@ const Login = () => {
           userId: data.userId || data.id || data.user_id
         };
         localStorage.setItem("user", JSON.stringify(userData));
+        applyThemeForUser(userData);
 
         // Reset chatbot on new login session
         window.dispatchEvent(new Event('profile-updated'));
@@ -164,6 +176,8 @@ const Login = () => {
   const handleGuestLogin = () => {
     localStorage.removeItem("user");
     localStorage.setItem('uc_guest', '1');
+    localStorage.setItem("theme", "light");
+    document.documentElement.classList.remove("dark");
     sessionStorage.removeItem('guest_chat_history'); // clear stale guest chat history before starting
     window.dispatchEvent(new Event('guest-logout'));
     window.dispatchEvent(new Event('chatbot-reset'));
