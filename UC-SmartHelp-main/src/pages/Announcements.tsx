@@ -247,7 +247,7 @@ const Announcements = () => {
                   className="min-h-[100px]"
                 />
               </div>
-              {user?.role?.toLowerCase() === "admin" && (
+              {(user?.role?.toLowerCase() === "admin" || user?.role?.toLowerCase() === "staff") && (
                 <div>
                   <label className="text-sm font-medium text-foreground mb-2 block">Audience</label>
                   <Select value={audience} onValueChange={(value: "all" | "students" | "staff") => setAudience(value)}>
@@ -323,7 +323,7 @@ const Announcements = () => {
                         onChange={(e) => setEditMessage(e.target.value)}
                         className="min-h-[100px]"
                       />
-                      {user?.role?.toLowerCase() === "admin" && (
+                      {(user?.role?.toLowerCase() === "admin" || user?.role?.toLowerCase() === "staff") && (
                         <Select value={editAudience} onValueChange={(value: "all" | "students" | "staff") => setEditAudience(value)}>
                           <SelectTrigger>
                             <SelectValue />

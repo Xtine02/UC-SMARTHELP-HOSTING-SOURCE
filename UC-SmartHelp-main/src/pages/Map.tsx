@@ -18,8 +18,6 @@ interface BuildingFloors {
 
 const BUILDINGS: BuildingFloors = {
   "Admin Building": ["1st Floor", "2nd Floor", "3rd Floor", "4th Floor", "5th Floor", "6th Floor"],
-  "Gotianoy Building": ["Ground Floor", "1st Floor", "2nd Floor"],
-  "Engineering Building": ["Ground Floor", "1st Floor", "2nd Floor", "3rd Floor"],
 };
 
 const FLOOR_DATA: Record<string, Record<string, string>> = {
@@ -31,41 +29,20 @@ const FLOOR_DATA: Record<string, Record<string, string>> = {
     "5th Floor": "Library extension, study areas",
     "6th Floor": "Executive offices, board room",
   },
-  "Gotianoy Building": {
-    "Ground Floor": "Main lobby, classrooms",
-    "1st Floor": "Lecture halls, laboratories",
-    "2nd Floor": "Computer labs, studios",
-  },
-  "Engineering Building": {
-    "Ground Floor": "Entrance, workshops",
-    "1st Floor": "Labs and studios",
-    "2nd Floor": "Classrooms",
-    "3rd Floor": "Research facilities",
-  },
 };
+
+const MAP_BUILDING = "Admin Building";
 
 const Map = () => {
   const navigate = useNavigate();
-  const [selectedBuilding, setSelectedBuilding] = useState<string>("");
   const [selectedFloor, setSelectedFloor] = useState<string>("");
 
+  const availableFloors = BUILDINGS[MAP_BUILDING] || [];
+
   // Get available floors for the selected building
-  const availableFloors = selectedBuilding ? BUILDINGS[selectedBuilding] : [];
-
-  // Reset floor when building changes
-  const handleBuildingChange = (value: string) => {
-    setSelectedBuilding(value);
-    setSelectedFloor("");
-  };
-
-  // Handle floor selection
-  const handleFloorChange = (value: string) => {
-    setSelectedFloor(value);
-  };
-
   const getFloorInfo = () => {
-    if (!selectedBuilding || !selectedFloor) return null;
-    return FLOOR_DATA[selectedBuilding]?.[selectedFloor] || "Floor information not available";
+    if (!selectedFloor) return null;
+    return FLOOR_DATA[MAP_BUILDING]?.[selectedFloor] || "Floor information not available";
   };
 
   return (
@@ -77,7 +54,7 @@ const Map = () => {
           <div>
             <h1 className="text-4xl font-bold text-foreground mb-2">Campus Map</h1>
             <p className="text-muted-foreground">
-              Navigate through different buildings and floors of University of Cebu
+              {MAP_BUILDING} - <span className="capitalize">Select a floor to view details</span>
             </p>
           </div>
           <Button
@@ -90,71 +67,38 @@ const Map = () => {
           </Button>
         </div>
 
-        {/* Selection Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Building Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Select Building</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Select value={selectedBuilding} onValueChange={handleBuildingChange}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose a building..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.keys(BUILDINGS).map((building) => (
-                    <SelectItem key={building} value={building}>
-                      {building}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedBuilding && (
-                <p className="text-sm text-muted-foreground mt-3">
-                  Selected: <span className="font-semibold text-foreground">{selectedBuilding}</span>
-                </p>
-              )}
-            </CardContent>
-          </Card>
+        {/* Floor Selection Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Select Floor</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Select value={selectedFloor} onValueChange={setSelectedFloor}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a floor..." />
+              </SelectTrigger>
+              <SelectContent>
+                {availableFloors.map((floor) => (
+                  <SelectItem key={floor} value={floor}>
+                    {floor}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedFloor && (
+              <p className="text-sm text-muted-foreground mt-3">
+                Selected: <span className="font-semibold text-foreground">{selectedFloor}</span>
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
-          {/* Floor Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Select Floor</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Select
-                value={selectedFloor}
-                onValueChange={handleFloorChange}
-                disabled={!selectedBuilding}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={selectedBuilding ? "Choose a floor..." : "Select a building first"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableFloors.map((floor) => (
-                    <SelectItem key={floor} value={floor}>
-                      {floor}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedFloor && (
-                <p className="text-sm text-muted-foreground mt-3">
-                  Selected: <span className="font-semibold text-foreground">{selectedFloor}</span>
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Map Display Area */}
-        {selectedBuilding && selectedFloor ? (
+        {/* Floor Details Display */}
+        {selectedFloor ? (
           <Card className="border-2">
             <CardHeader>
               <CardTitle>
-                {selectedBuilding} - {selectedFloor}
+                {MAP_BUILDING} - {selectedFloor}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -170,8 +114,8 @@ const Map = () => {
           <Card className="border-2 border-dashed">
             <CardContent className="pt-12 pb-12">
               <div className="text-center text-muted-foreground space-y-2">
-                <p className="text-lg font-semibold">Select a Building and Floor</p>
-                <p className="text-sm">Choose a building above and then select a floor to view the map</p>
+                <p className="text-lg font-semibold">Select a Floor</p>
+                <p className="text-sm">Choose a floor above to view its details</p>
               </div>
             </CardContent>
           </Card>
