@@ -1,6 +1,5 @@
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,17 +11,33 @@ const ResetPassword = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+  const token = useMemo(() => new URLSearchParams(window.location.search).get("token"), []);
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!token) {
+      toast({ title: "Error", description: "Invalid reset link", variant: "destructive" });
+      return;
+    }
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } else {
+    try {
+      const response = await fetch(`${API_URL}/api/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, password }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to update password");
+      }
       toast({ title: "Password updated!" });
-      navigate("/studentdashboard");
+      navigate("/login");
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : "Failed to update password";
+      toast({ title: "Error", description: errorMsg, variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
   };
 

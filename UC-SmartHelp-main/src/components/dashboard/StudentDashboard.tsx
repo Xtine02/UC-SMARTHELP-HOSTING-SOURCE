@@ -5,7 +5,6 @@ import NewTicketDialog from "@/components/tickets/NewTicketDialog";
 import TicketDetailModal from "@/components/tickets/TicketDetailModal";
 import FeedbackDialog from "@/components/tickets/FeedbackDialog";
 import Navbar from "@/components/Navbar";
-import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import {
   AlertDialog,
@@ -87,13 +86,18 @@ const StudentDashboard = () => {
     const handleLogout = () => {
       navigate("/login");
     };
+    const handleOpenNewTicketDialog = () => {
+      setShowNewTicket(true);
+    };
 
     window.addEventListener("user-logout", handleLogout);
     window.addEventListener("storage", checkAuth);
+    window.addEventListener("open-new-ticket-dialog", handleOpenNewTicketDialog);
 
     return () => {
       window.removeEventListener("user-logout", handleLogout);
       window.removeEventListener("storage", checkAuth);
+      window.removeEventListener("open-new-ticket-dialog", handleOpenNewTicketDialog);
     };
   }, [navigate]);
 
@@ -108,7 +112,6 @@ const StudentDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
-      <ChatbotWidget />
       
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>

@@ -32,8 +32,6 @@ export const useBackConfirm = (onBack?: () => void) => {
     localStorage.removeItem("uc_guest");
     localStorage.removeItem("user");
     
-    // Dispatch events to reset UI components
-    window.dispatchEvent(new Event('chatbot-reset'));
     window.dispatchEvent(new Event('profile-updated'));
     
     setShowConfirm(false);

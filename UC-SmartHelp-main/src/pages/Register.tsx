@@ -54,6 +54,22 @@ const Register = () => {
     };
 
     try {
+      // Frontend pre-check guard for existing accounts
+      const lookupResponse = await fetch(`${API_URL}/api/find-linked-gmail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: userData.email }),
+      });
+      if (lookupResponse.ok) {
+        toast({
+          variant: "destructive",
+          title: "Registration Error",
+          description: "Email is already taken",
+        });
+        setLoading(false);
+        return;
+      }
+
       const response = await fetch(`${API_URL}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

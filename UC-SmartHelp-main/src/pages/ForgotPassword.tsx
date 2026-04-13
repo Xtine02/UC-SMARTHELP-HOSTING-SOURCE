@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -135,11 +134,16 @@ const ForgotPassword = () => {
         console.log("✅ Gmail verified successfully");
       }
 
-      console.log("📤 Sending Supabase reset email to:", trimmedEmail);
-      const resetResult = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
+      console.log("📤 Sending reset email via backend to:", trimmedEmail);
+      const response = await fetch(`${API_URL}/api/request-password-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmedEmail }),
       });
-      console.log("📨 Supabase Reset Result:", resetResult);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to send reset link right now.");
+      }
       toast({ title: "Check your email", description: "Password reset link sent to " + trimmedEmail });
     } catch (error: unknown) {
       console.error("❌ Reset error:", error);
@@ -261,14 +265,6 @@ const ForgotPassword = () => {
               </form>
 
               <div className="grid gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(1)}
-                  className="w-full text-primary-foreground hover:bg-white/10"
-                >
-                  Back
-                </Button>
                 <Button
                   type="button"
                   variant="ghost"

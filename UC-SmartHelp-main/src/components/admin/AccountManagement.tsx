@@ -123,12 +123,13 @@ const AccountManagement = () => {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || "Failed to update user");
       }
+      const updatedUser = await response.json();
 
       // Update local users list
       setUsers((prev) =>
-        prev.map((u) => (u.id === editUser.id ? editUser : u))
+        prev.map((u) => (u.id === editUser.id ? { ...u, ...updatedUser } : u))
       );
-      setSelectedUser(editUser);
+      setSelectedUser((prev) => (prev ? { ...prev, ...updatedUser } as User : prev));
       setIsEditing(false);
       setEditUser(null);
       toast({ title: "Success", description: "User updated successfully" });

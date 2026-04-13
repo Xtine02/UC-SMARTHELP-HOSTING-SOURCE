@@ -3,6 +3,8 @@ import mysql, { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -136,6 +138,21 @@ const initializeDatabase = async () => {
     if (!userColumnNames.includes('is_disabled')) {
       await connection.query("ALTER TABLE users ADD COLUMN is_disabled TINYINT(1) DEFAULT 0");
     }
+
+    // Password reset token storage
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        token_hash VARCHAR(128) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_token_hash (token_hash),
+        INDEX idx_user_id (user_id),
+        INDEX idx_expires_at (expires_at)
+      )
+    `);
 
     // Normalize response table naming (if old plural table exists, rename it)
     const [tables] = await connection.query<RowDataPacket[]>("SHOW TABLES");
@@ -380,26 +397,38 @@ app.post('/api/register', async (req: Request, res: Response) => {
     return res.status(400).json({ error: "All fields are required" });
   }
   try {
+    const normalizedEmail = String(email).toLowerCase().trim();
     const hashedPassword = await bcrypt.hash(password, 10);
-    const [existing] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
-    let user;
+    const [existing] = await db.query<RowDataPacket[]>(
+      `SELECT 1
+       FROM users
+       WHERE LOWER(TRIM(email)) = ?
+          OR LOWER(TRIM(COALESCE(gmail_account, ''))) = ?
+       LIMIT 1`,
+      [normalizedEmail, normalizedEmail]
+    );
     if (existing.length > 0) {
-      await db.query('UPDATE users SET first_name = ?, last_name = ?, password = ? WHERE email = ?', [firstName, lastName, hashedPassword, email]);
-      const [updated] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
-      user = updated[0];
-    } else {
-      // Check if this is the first user
-      const [userCount] = await db.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM users');
+      return res.status(409).json({ error: "Email is already taken" });
+    }
+
+    // Check if this is the first user
+    const [userCount] = await db.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM users');
     const role = (userCount[0] as { count: number }).count === 0 ? 'admin' : 'student';
       
-    await db.query<ResultSetHeader>('INSERT INTO users (first_name, last_name, email, password, role) VALUES (?, ?, ?, ?, ?)', [firstName, lastName, email, hashedPassword, role]);
-    const [inserted] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
-    user = inserted[0];
+    await db.query<ResultSetHeader>(
+      'INSERT INTO users (first_name, last_name, email, password, role) VALUES (?, ?, ?, ?, ?)',
+      [firstName, lastName, normalizedEmail, hashedPassword, role]
+    );
+    const [inserted] = await db.query<RowDataPacket[]>(
+      'SELECT * FROM users WHERE email = ?',
+      [normalizedEmail]
+    );
+    const user = inserted[0];
+  
+    res.status(201).json(formatUserResponse(user as User));
+  } catch (error: unknown) {
+    res.status(500).json({ error: "Registration failed", details: error instanceof Error ? error.message : String(error) });
   }
-  res.status(201).json(formatUserResponse(user as User));
-} catch (error: unknown) {
-  res.status(500).json({ error: "Registration failed", details: error instanceof Error ? error.message : String(error) });
-}
 });
 
 app.post('/api/login', async (req: Request, res: Response) => {
@@ -655,6 +684,100 @@ app.post('/api/verify-gmail-owner', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error('❌ Error verifying Gmail owner:', error);
     res.status(500).json({ error: 'Server error while verifying Gmail' });
+  }
+});
+
+app.post('/api/request-password-reset', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(
+      'SELECT id, email, first_name FROM users WHERE email = ? OR gmail_account = ? LIMIT 1',
+      [normalizedEmail, normalizedEmail]
+    );
+
+    // Do not leak account existence
+    if (rows.length === 0) {
+      return res.status(200).json({ message: 'If this account exists, a reset link has been sent.' });
+    }
+
+    const user = rows[0];
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
+
+    await db.query(
+      'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)',
+      [user.id, tokenHash, expiresAt]
+    );
+
+    const mailUser = process.env.SMTP_USER;
+    const mailPass = process.env.SMTP_PASS;
+    if (!mailUser || !mailPass) {
+      console.error('Missing SMTP_USER/SMTP_PASS in environment');
+      return res.status(500).json({ error: 'Email service is not configured.' });
+    }
+
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: mailUser, pass: mailPass },
+    });
+
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:8080'}/reset-password?token=${resetToken}`;
+    await transporter.sendMail({
+      from: `"UC SmartHelp" <${mailUser}>`,
+      to: normalizedEmail,
+      subject: 'Reset your UC SmartHelp password',
+      html: `
+        <p>Hello ${user.first_name || 'User'},</p>
+        <p>You requested a password reset for your UC SmartHelp account.</p>
+        <p>Click this link to reset your password:</p>
+        <p><a href="${resetUrl}">${resetUrl}</a></p>
+        <p>This link expires in 30 minutes.</p>
+        <p>If you did not request this, you can ignore this email.</p>
+      `,
+    });
+
+    return res.status(200).json({ message: 'If this account exists, a reset link has been sent.' });
+  } catch (error: unknown) {
+    console.error('Error requesting password reset:', error);
+    return res.status(500).json({ error: 'Failed to send password reset email' });
+  }
+});
+
+app.post('/api/reset-password', async (req: Request, res: Response) => {
+  const { token, password } = req.body;
+  if (!token || !password) {
+    return res.status(400).json({ error: 'Token and password are required' });
+  }
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT id, user_id FROM password_reset_tokens
+       WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()
+       ORDER BY id DESC LIMIT 1`,
+      [tokenHash]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const resetRow = rows[0];
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+
+    await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, resetRow.user_id]);
+    await db.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?', [resetRow.id]);
+
+    return res.status(200).json({ message: 'Password updated successfully' });
+  } catch (error: unknown) {
+    console.error('Error resetting password:', error);
+    return res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
@@ -1316,134 +1439,6 @@ try {
 }
 });
 
-// Chatbot user context endpoint - returns user-specific data for RAG
-app.get('/api/chatbot-user-data/:userId', async (req: Request, res: Response) => {
-  const { userId } = req.params;
-  
-  try {
-    console.log("🤖 [Chatbot] Fetching context for user_id:", userId);
-    
-    // Handle guest users
-    if (userId === 'guest') {
-      console.log("👤 [Chatbot] Returning guest context");
-      
-      // Get all departments (public data)
-      const [departmentRows] = await db.query<RowDataPacket[]>(
-        `SELECT id, name FROM departments ORDER BY name`
-      );
-      
-      // Get general announcements (all audience)
-      const [announcementRows] = await db.query<RowDataPacket[]>(
-        `SELECT id, message, role, audience, department, posted_at FROM announcement
-         WHERE audience = 'all'
-         ORDER BY posted_at DESC LIMIT 10`
-      );
-      
-      const context = {
-        user: {
-          id: 'guest',
-          firstName: 'Guest',
-          lastName: 'User',
-          email: null,
-          role: 'guest',
-          department: null
-        },
-        tickets: [],
-        responses: [],
-        departments: departmentRows,
-        announcements: announcementRows
-      };
-      
-      console.log("✅ [Chatbot] Guest context loaded");
-      return res.json(context);
-    }
-    
-    const pkName = await getUserPkName();
-    
-    // Get user profile
-    const [userRows] = await db.query<RowDataPacket[]>(
-      `SELECT ${pkName} as id, first_name, last_name, email, role, department FROM users WHERE ${pkName} = ? LIMIT 1`,
-      [userId]
-    );
-    
-    if (userRows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const user = userRows[0];
-    
-    // Get user's tickets
-    const [ticketRows] = await db.query<RowDataPacket[]>(
-      `SELECT id, ticket_number, subject, description, department, status, created_at FROM tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`,
-      [userId]
-    );
-    
-    // Get user's ticket responses
-    const [responseRows] = await db.query<RowDataPacket[]>(
-      `SELECT tr.response_id, tr.ticket_id, tr.message, tr.role, tr.created_at
-       FROM ${RESPONSE_TABLE} tr
-       WHERE tr.ticket_id IN (SELECT id FROM tickets WHERE user_id = ?)
-       ORDER BY tr.created_at DESC LIMIT 50`,
-      [userId]
-    );
-    
-    // Get departments
-    const [departmentRows] = await db.query<RowDataPacket[]>(
-      `SELECT id, name FROM departments ORDER BY name`
-    );
-    
-    // Get announcements visible to this user
-    const [announcementRows] = await db.query<RowDataPacket[]>(
-      `SELECT id, message, role, audience, department, posted_at FROM announcement
-       WHERE audience IN ('all', ?) OR department = ?
-       ORDER BY posted_at DESC LIMIT 10`,
-      [user.role, user.department]
-    );
-    
-    // Format context for RAG
-    const context = {
-      user: {
-        id: user.id,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        email: user.email,
-        role: user.role,
-        department: user.department
-      },
-      tickets: ticketRows.map((t: any) => ({
-        id: t.id,
-        ticketNumber: t.ticket_number,
-        subject: t.subject,
-        description: t.description,
-        department: t.department,
-        status: t.status,
-        createdAt: t.created_at
-      })),
-      responses: responseRows.map((r: any) => ({
-        id: r.response_id,
-        ticketId: r.ticket_id,
-        message: r.message,
-        role: r.role,
-        createdAt: r.created_at
-      })),
-      departments: departmentRows,
-      announcements: announcementRows
-    };
-    
-    console.log("✅ [Chatbot] Context loaded:", {
-      tickets: ticketRows.length,
-      responses: responseRows.length,
-      departments: departmentRows.length,
-      announcements: announcementRows.length
-    });
-    
-    res.json(context);
-  } catch (error: unknown) {
-    console.error('❌ Error fetching chatbot context:', error);
-    res.status(500).json({ error: 'Error fetching chatbot context' });
-  }
-});
-
 // Diagnostic endpoint to check database structure
 app.get('/api/debug/users-table', async (req: Request, res: Response) => {
 try {
@@ -1503,7 +1498,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
 
 app.patch('/api/users/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { role, department, is_disabled } = req.body;
+  const { first_name, last_name, email, role, department, is_disabled } = req.body;
 
   try {
     if (!id) {
@@ -1517,6 +1512,26 @@ app.patch('/api/users/:id', async (req: Request, res: Response) => {
     if (typeof role !== "undefined") {
       updateFields.push("role = ?");
       values.push(role);
+    }
+    if (typeof first_name !== "undefined") {
+      updateFields.push("first_name = ?");
+      values.push(first_name);
+    }
+    if (typeof last_name !== "undefined") {
+      updateFields.push("last_name = ?");
+      values.push(last_name);
+    }
+    if (typeof email !== "undefined") {
+      const normalizedEmail = String(email).toLowerCase().trim();
+      const [existingEmail] = await db.query<RowDataPacket[]>(
+        `SELECT ${pkName} as id FROM users WHERE LOWER(TRIM(email)) = ? AND ${pkName} <> ? LIMIT 1`,
+        [normalizedEmail, id]
+      );
+      if (existingEmail.length > 0) {
+        return res.status(409).json({ error: "Email is already taken" });
+      }
+      updateFields.push("email = ?");
+      values.push(normalizedEmail);
     }
     if (typeof department !== "undefined") {
       updateFields.push("department = ?");
@@ -1542,7 +1557,11 @@ app.patch('/api/users/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ message: "User updated" });
+    const [updatedRows] = await db.query<RowDataPacket[]>(
+      `SELECT ${pkName} AS id, first_name, last_name, email, role, department, is_disabled, image FROM users WHERE ${pkName} = ? LIMIT 1`,
+      [id]
+    );
+    res.json(updatedRows[0] || { message: "User updated" });
   } catch (error: unknown) {
     console.error('Error updating user:', error);
     res.status(500).json({ error: "Error updating user", details: error instanceof Error ? error.message : String(error) });

@@ -6,7 +6,6 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import TicketDetailModal from "@/components/tickets/TicketDetailModal";
 import Navbar from "@/components/Navbar";
-import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import { ArrowUpDown, ChevronUp, ChevronDown, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -340,7 +339,6 @@ const AccountingDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
-      <ChatbotWidget />
 
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>

@@ -6,7 +6,6 @@ import ReviewAnalytics from "@/components/analytics/ReviewAnalytics";
 import AccountManagement from "@/components/admin/AccountManagement";
 import AuditTrail from "@/components/admin/AuditTrail";
 import Navbar from "@/components/Navbar";
-import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import {
   AlertDialog,
@@ -90,20 +89,19 @@ const AdminDashboard = () => {
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"department" | "chatbot" | "tickets" | "accounts" | "audit" | "feedback">("department");
+  const [view, setView] = useState<"department" | "tickets" | "accounts" | "audit" | "feedback">("department");
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [showDeptDialog, setShowDeptDialog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<"csv" | "pdf">("csv");
-  const [exportTab, setExportTab] = useState<"department" | "chatbot" | "accounts" | "feedback">("department");
+  const [exportTab, setExportTab] = useState<"department" | "accounts" | "feedback">("department");
   const { showConfirm, handleConfirmLeave, handleStayOnPage } = useBackConfirm(
     view !== "department" ? () => setView("department") : undefined
   );
 
   const navItems = [
     { key: "department", label: "Department Analytics" },
-    { key: "chatbot", label: "Chatbot Analytic" },
     { key: "accounts", label: "User Management" },
     { key: "feedback", label: "Feedback Analytic" },
   ] as const;
@@ -204,7 +202,7 @@ const AdminDashboard = () => {
   };
 
   const exportRowsByView = async (
-    targetTab: "department" | "chatbot" | "accounts" | "feedback"
+    targetTab: "department" | "accounts" | "feedback"
   ): Promise<{ title: string; headers: string[]; rows: string[][] }> => {
     const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
     if (targetTab === "department") {
@@ -255,11 +253,6 @@ const AdminDashboard = () => {
       };
     }
 
-    return {
-      title: "Chatbot Analytics",
-      headers: ["Metric", "Value"],
-      rows: [["Status", "Coming soon"]],
-    };
   };
 
   const handleExport = async () => {
@@ -283,7 +276,6 @@ const AdminDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
-      <ChatbotWidget />
 
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>
@@ -327,12 +319,11 @@ const AdminDashboard = () => {
                   <div className="space-y-4">
                     <Select
                       value={exportTab}
-                      onValueChange={(v: "department" | "chatbot" | "accounts" | "feedback") => setExportTab(v)}
+                      onValueChange={(v: "department" | "accounts" | "feedback") => setExportTab(v)}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="department">Department Analytics</SelectItem>
-                        <SelectItem value="chatbot">Chatbot Analytics</SelectItem>
                         <SelectItem value="accounts">User Management</SelectItem>
                         <SelectItem value="feedback">Feedback Analytics</SelectItem>
                       </SelectContent>
@@ -515,17 +506,6 @@ const AdminDashboard = () => {
           <div className="p-6">
             {view === "accounts" && <AccountManagement />}
             {view === "feedback" && <ReviewAnalytics userDepartment={user?.department} userRole={user?.role} />}
-            {view === "chatbot" && (
-              <div className="flex flex-col items-center justify-center py-12">
-                <div className="rounded-2xl border bg-background p-8 text-center max-w-md">
-                  <h2 className="text-2xl font-bold mb-2">Chatbot Analytics</h2>
-                  <p className="text-muted-foreground mb-4">Chatbot performance metrics and usage statistics will be displayed here.</p>
-                  <div className="h-40 flex items-center justify-center bg-muted/20 rounded-xl">
-                    <p className="text-sm text-muted-foreground">Chatbot analytics coming soon</p>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </main>

@@ -20,7 +20,6 @@ export async function performLogout() {
   sessionStorage.removeItem("website_feedback_shown_session");
 
   // Dispatch reset events before navigation.
-  window.dispatchEvent(new Event("chatbot-reset"));
   window.dispatchEvent(new Event("user-logout"));
 
   // Best-effort audit call, but do not block UX.
@@ -37,6 +36,6 @@ export async function performLogout() {
     console.error("Error logging out:", error);
   }
   
-  // Reload page to home - ensures chatbot widget is completely removed
+  // Reload page to home.
   window.location.href = "/";
 }

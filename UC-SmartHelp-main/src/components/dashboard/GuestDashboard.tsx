@@ -3,7 +3,6 @@ import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import Navbar from "@/components/Navbar";
-import ChatbotWidget from "@/components/ChatbotWidget";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import {
   AlertDialog,
@@ -58,7 +57,6 @@ const GuestDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Navbar />
-      <ChatbotWidget />
 
       <AlertDialog open={showConfirm} onOpenChange={handleStayOnPage}>
         <AlertDialogContent>

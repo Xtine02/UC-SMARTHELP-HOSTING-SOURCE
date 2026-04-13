@@ -89,9 +89,7 @@ const Login = () => {
       localStorage.setItem("user", JSON.stringify(userData));
       applyThemeForUser(userData);
 
-      // Reset chatbot on new login session
       window.dispatchEvent(new Event('profile-updated'));
-      window.dispatchEvent(new Event('chatbot-reset'));
       
       toast({ title: "Welcome!", description: `Signed in as ${userData.firstName || 'User'}` });
       navigate(getRedirectPath(userData));
@@ -161,9 +159,7 @@ const Login = () => {
         localStorage.setItem("user", JSON.stringify(userData));
         applyThemeForUser(userData);
 
-        // Reset chatbot on new login session
         window.dispatchEvent(new Event('profile-updated'));
-        window.dispatchEvent(new Event('chatbot-reset'));
 
         navigate(getRedirectPath(userData));
       } else {
@@ -185,9 +181,7 @@ const Login = () => {
     localStorage.setItem('uc_guest', '1');
     localStorage.setItem("theme", "light");
     document.documentElement.classList.remove("dark");
-    sessionStorage.removeItem('guest_chat_history'); // clear stale guest chat history before starting
     window.dispatchEvent(new Event('guest-logout'));
-    window.dispatchEvent(new Event('chatbot-reset'));
     toast({ title: "Guest Mode Enabled" });
     navigate("/GuestDashboard");
   };

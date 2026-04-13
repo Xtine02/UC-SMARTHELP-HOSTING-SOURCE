@@ -27,6 +27,7 @@ import AdminDashboard from "@/components/dashboard/AdminDashboard";
 import GuestDashboard from "@/components/dashboard/GuestDashboard";
 import AccountingDashboard from "@/components/dashboard/AccountingDashboard";
 import ScholarshipDashboard from "@/components/dashboard/ScholarshipDashboard";
+import FlowiseChatbot from "@/components/FlowiseChatbot";
 import { useEffect, useState, useRef } from "react";
 import WebsiteFeedbackDialog from "@/components/tickets/WebsiteFeedbackDialog";
 const queryClient = new QueryClient();
@@ -75,13 +76,9 @@ const App = () => {
       }, 30000); // 30 seconds
     }
 
-    // Detect logout (user changed from having id to no-id)
     if (!userId && prevUserId) {
       console.log('👋 User logged out');
-      // Clear the session flag on logout
       sessionStorage.removeItem("website_feedback_shown_session");
-      // Dispatch chatbot reset event to remove chatbot widget
-      window.dispatchEvent(new Event('chatbot-reset'));
     }
 
     // Update previous user ref
@@ -94,20 +91,6 @@ const App = () => {
       }
     };
   }, [user]);
-
-  // Listen for storage changes (logout from other tab or back button after logout)
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      // If 'user' key is removed from localStorage, trigger chatbot reset
-      if (e.key === 'user' && e.newValue === null) {
-        console.log('🔄 User cleared from storage - dispatching chatbot reset');
-        window.dispatchEvent(new Event('chatbot-reset'));
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
 
   // Listen for manual feedback trigger from navbar
   useEffect(() => {
@@ -141,6 +124,7 @@ const App = () => {
           onClose={() => setShowWebsiteFeedback(false)}
         />
         <BrowserRouter>
+          <FlowiseChatbot />
           <Routes>
             {/* Main Public Routes */}
             <Route path="/" element={<Index />} />
