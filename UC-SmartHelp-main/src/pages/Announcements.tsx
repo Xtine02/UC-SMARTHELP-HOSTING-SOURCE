@@ -30,7 +30,7 @@ interface Announcement {
   user_id?: number | null;
   role: string;
   department?: string | null;
-  audience?: "all" | "students" | "staff";
+  audience?: "all" | "students" | "staff" | "admin";
   message: string;
   posted_at: string;
   created_at?: string;
@@ -43,14 +43,12 @@ const Announcements = () => {
   const [user, setUser] = useState<User | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [newMessage, setNewMessage] = useState("");
-  const [audience, setAudience] = useState<"all" | "students" | "staff">("all");
+  const [audience, setAudience] = useState<"all" | "students" | "staff" | "admin">("all");
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<number | null>(null);
   const [editMessage, setEditMessage] = useState("");
-  const [editAudience, setEditAudience] = useState<"all" | "students" | "staff">("all");
-  const [unreadCount, setUnreadCount] = useState(0);
-
+  const [editAudience, setEditAudience] = useState<"all" | "students" | "staff" | "admin">("all");
   // Get user from localStorage
   useEffect(() => {
     try {
@@ -62,55 +60,6 @@ const Announcements = () => {
       console.error("Failed to parse user", e);
     }
   }, []);
-
-  // Fetch unread announcement count
-  useEffect(() => {
-    if (user && (user.userId || user.id || user.user_id)) {
-      const userId = user.userId || user.id || user.user_id;
-      fetchUnreadCount(userId as number);
-    }
-  }, [user]);
-
-  const fetchUnreadCount = async (userId: number) => {
-    try {
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      const response = await fetch(`${API_URL}/api/announcements/unread-count?user_id=${userId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setUnreadCount(data.count);
-      }
-    } catch (error) {
-      console.error("Error fetching unread announcement count:", error);
-    }
-  };
-
-  const markAnnouncementAsRead = async (announcementId: number) => {
-    if (!user || (!user.userId && !user.id && !user.user_id)) return;
-    
-    try {
-      const userId = user.userId || user.id || user.user_id;
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      await fetch(`${API_URL}/api/announcements/${announcementId}/mark-as-read`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId })
-      });
-      
-      // Decrement unread count
-      setUnreadCount(prev => Math.max(0, prev - 1));
-      
-      // Update the announcement to mark it as read
-      setAnnouncements(prev =>
-        prev.map(a =>
-          (a.announcement_id === announcementId || a.id === announcementId)
-            ? { ...a, is_read: true }
-            : a
-        )
-      );
-    } catch (error) {
-      console.error("Error marking announcement as read:", error);
-    }
-  };
 
   // Fetch announcements
   const fetchAnnouncements = async () => {
@@ -343,7 +292,7 @@ const Announcements = () => {
               {(user?.role?.toLowerCase() === "admin" || user?.role?.toLowerCase() === "staff") && (
                 <div>
                   <label className="text-sm font-medium text-foreground mb-2 block">Audience</label>
-                  <Select value={audience} onValueChange={(value: "all" | "students" | "staff") => setAudience(value)}>
+                  <Select value={audience} onValueChange={(value: "all" | "students" | "staff" | "admin") => setAudience(value)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -351,6 +300,9 @@ const Announcements = () => {
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="students">Students</SelectItem>
                       <SelectItem value="staff">Staff</SelectItem>
+                      {user?.role?.toLowerCase() === "staff" && (
+                        <SelectItem value="admin">Admin</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -370,9 +322,6 @@ const Announcements = () => {
         <div className="space-y-4">
           <h2 className="text-2xl font-semibold text-foreground flex items-center gap-2">
             All Announcements
-            {unreadCount > 0 && (
-              <Badge className="bg-red-500 text-white">{unreadCount}</Badge>
-            )}
             {refreshing && <span className="text-xs text-muted-foreground">Updating...</span>}
           </h2>
 
@@ -389,20 +338,12 @@ const Announcements = () => {
               const roleLabel = isAdminPost ? "Admin" : "Staff";
               const staffDeptLabel = announcement.department ? ` - ${announcement.department}` : "";
               const announcementId = announcement.announcement_id || announcement.id;
-              const isUnread = announcement.is_read === false;
 
               return (
               <Card 
                 key={announcementId}
                 id={`announcement-${announcementId}`}
-                className={`overflow-hidden hover:shadow-lg transition-shadow cursor-pointer ${
-                  isUnread ? 'border-primary/50 bg-primary/5' : ''
-                }`}
-                onClick={() => {
-                  if (isUnread) {
-                    markAnnouncementAsRead(announcementId);
-                  }
-                }}
+                className="overflow-hidden hover:shadow-lg transition-shadow cursor-pointer"
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-4">
@@ -414,9 +355,6 @@ const Announcements = () => {
                         <Badge variant="outline" className="capitalize">
                           {announcement.audience || "all"}
                         </Badge>
-                        {isUnread && (
-                          <Badge className="bg-red-500 text-white">NEW</Badge>
-                        )}
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground whitespace-nowrap">
@@ -436,7 +374,7 @@ const Announcements = () => {
                         className="min-h-[100px]"
                       />
                       {(user?.role?.toLowerCase() === "admin" || user?.role?.toLowerCase() === "staff") && (
-                        <Select value={editAudience} onValueChange={(value: "all" | "students" | "staff") => setEditAudience(value)}>
+                        <Select value={editAudience} onValueChange={(value: "all" | "students" | "staff" | "admin") => setEditAudience(value)}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
@@ -444,6 +382,9 @@ const Announcements = () => {
                             <SelectItem value="all">All</SelectItem>
                             <SelectItem value="students">Students</SelectItem>
                             <SelectItem value="staff">Staff</SelectItem>
+                            {user?.role?.toLowerCase() === "staff" && (
+                              <SelectItem value="admin">Admin</SelectItem>
+                            )}
                           </SelectContent>
                         </Select>
                       )}

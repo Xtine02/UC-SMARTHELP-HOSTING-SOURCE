@@ -19,6 +19,24 @@ export const getLoggedInRedirectPath = (): string => {
   return "/";
 };
 
+export const getDashboardPath = (): string => {
+  const isGuest = localStorage.getItem("uc_guest") === "1";
+  const userJson = localStorage.getItem("user");
+  const user = userJson ? JSON.parse(userJson) : null;
+  const role = (user?.role || "student").toLowerCase();
+  const department = (user?.department || "").toLowerCase();
+  
+  if (role === "admin") return "/AdminDashboard";
+  if (role === "staff") {
+    if (department === "scholarship") {
+      return "/ScholarshipDashboard";
+    }
+    return "/AccountingDashboard";
+  }
+  if (isGuest) return "/GuestDashboard";
+  return "/StudentDashboard";
+};
+
 export async function performLogout() {
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
   const userJson = localStorage.getItem("user");

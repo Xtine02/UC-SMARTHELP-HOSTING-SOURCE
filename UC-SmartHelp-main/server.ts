@@ -30,6 +30,7 @@ const db = mysql.createPool({
 // This is used for ticket responses tables, which may be named either `ticket_response` or `ticket_responses`.
 // It's initialized during database migration in `initializeDatabase`.
 let RESPONSE_TABLE = 'ticket_response';
+let NOTIFICATION_PK_NAME = 'id';
 
 interface DBColumn extends RowDataPacket {
   Field: string;
@@ -100,6 +101,15 @@ const createNotification = async (
   } catch (error: unknown) {
     console.error('❌ Error creating notification:', error);
   }
+};
+
+const normalizeUserId = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 };
 
 // Verify database connection and perform auto-migrations
@@ -452,32 +462,73 @@ const initializeDatabase = async () => {
           announcement_id INT NULL,
           is_read TINYINT(1) DEFAULT 0,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
           INDEX idx_user_id (user_id),
           INDEX idx_created_at (created_at)
         )
       `);
 
-      // Create announcement_views table to track announcement reads
-      // First check if announcement table exists
+      // Ensure notifications table schema is complete and drop stale user_id foreign keys if present
       try {
-        const [announcementCheckCols] = await connection.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-        const announcementIdCol = announcementCheckCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'announcement_id')?.Field || 'id';
-        
-        await connection.query(`
-          CREATE TABLE IF NOT EXISTS announcement_views (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT NOT NULL,
-            announcement_id INT NOT NULL,
-            viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_user_announcement (user_id, announcement_id),
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-            FOREIGN KEY (announcement_id) REFERENCES announcement(${announcementIdCol}) ON DELETE CASCADE,
-            INDEX idx_user_id (user_id)
-          )
-        `);
+        const [notificationColumns] = await connection.query<DBColumn[]>("SHOW COLUMNS FROM notifications");
+        const notificationColumnNames = notificationColumns.map((c) => c.Field);
+        const alterClauses: string[] = [];
+
+        if (!notificationColumnNames.includes("user_id")) {
+          alterClauses.push("ADD COLUMN user_id INT NOT NULL");
+        }
+        if (!notificationColumnNames.includes("type")) {
+          alterClauses.push("ADD COLUMN type VARCHAR(50) NOT NULL");
+        }
+        if (!notificationColumnNames.includes("title")) {
+          alterClauses.push("ADD COLUMN title VARCHAR(255) NOT NULL");
+        }
+        if (!notificationColumnNames.includes("message")) {
+          alterClauses.push("ADD COLUMN message TEXT");
+        }
+        if (!notificationColumnNames.includes("ticket_id")) {
+          alterClauses.push("ADD COLUMN ticket_id INT NULL");
+        }
+        if (!notificationColumnNames.includes("announcement_id")) {
+          alterClauses.push("ADD COLUMN announcement_id INT NULL");
+        }
+        if (!notificationColumnNames.includes("is_read")) {
+          alterClauses.push("ADD COLUMN is_read TINYINT(1) DEFAULT 0");
+        }
+        if (!notificationColumnNames.includes("created_at")) {
+          alterClauses.push("ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        if (alterClauses.length > 0) {
+          await connection.query(`ALTER TABLE notifications ${alterClauses.join(", ")}`);
+        }
+
+        NOTIFICATION_PK_NAME = notificationColumns.find((c) => {
+          const field = c.Field.toLowerCase();
+          return field === 'id' || field === 'notification_id';
+        })?.Field || 'id';
+
+        const [notificationFks] = await connection.query<RowDataPacket[]>(
+          `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+           WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = 'notifications'
+             AND COLUMN_NAME = 'user_id'
+             AND REFERENCED_TABLE_NAME = 'users'`
+        );
+
+        for (const fk of notificationFks) {
+          if (fk?.CONSTRAINT_NAME) {
+            await connection.query(`ALTER TABLE notifications DROP FOREIGN KEY \`${fk.CONSTRAINT_NAME}\``);
+          }
+        }
+      } catch (notifSchemaError: unknown) {
+        console.warn("Could not migrate notifications table schema:", notifSchemaError instanceof Error ? notifSchemaError.message : String(notifSchemaError));
+      }
+
+      // Remove legacy announcement_views table since announcement read tracking is no longer used
+      try {
+        await connection.query(`DROP TABLE IF EXISTS announcement_views`);
       } catch (announcementViewsErr: unknown) {
-        console.warn("Could not create announcement_views table (announcement table might not exist yet):", announcementViewsErr instanceof Error ? announcementViewsErr.message : String(announcementViewsErr));
+        console.warn("Could not drop legacy announcement_views table:", announcementViewsErr instanceof Error ? announcementViewsErr.message : String(announcementViewsErr));
       }
     } catch (err: unknown) {
       console.error("Error creating notification tables:", err);
@@ -1608,23 +1659,24 @@ try {
   const [result] = await db.execute<ResultSetHeader>(query, params);
   await logAudit(req, userId, 'Created ticket', 'ticket', result.insertId.toString());
 
-  // Notify admins about new ticket submission
+  // Notify admins only about new ticket submission
   try {
+    const userPkName = await getUserPkName();
     const [adminUsers] = await db.query<RowDataPacket[]>(
-      "SELECT id FROM users WHERE role = 'admin'"
+      `SELECT ${userPkName} AS user_id FROM users WHERE role = 'admin'`
     );
     
-    for (const admin of adminUsers) {
+    for (const account of adminUsers) {
       await createNotification(
-        admin.id,
+        account.user_id,
         'new_ticket',
-        'New ticket submitted',
+        'New ticket submitted in the system',
         `A new ticket has been submitted: "${subject}"`,
         result.insertId
       );
     }
   } catch (notifError) {
-    console.error('Error creating admin notification for new ticket:', notifError);
+    console.error('Error creating notification for new ticket:', notifError);
     // Don't fail the ticket creation if notification fails
   }
 
@@ -1891,16 +1943,17 @@ app.post('/api/tickets/:id/responses', async (req: Request, res: Response) => {
           );
         }
 
-        // If a student replied, notify all staff/admin users about the new reply
+        // If a student replied, notify all staff users (not admin) about the new reply
         if (role === 'student') {
+          const userPkName = await getUserPkName();
           const [staffUsers] = await db.query<RowDataPacket[]>(
-            "SELECT id FROM users WHERE role IN ('staff', 'admin')"
+            `SELECT ${userPkName} AS user_id FROM users WHERE role = 'staff'`
           );
           
           console.log(`📢 Notifying ${staffUsers.length} staff members about student reply`);
           for (const staff of staffUsers) {
             await createNotification(
-              staff.id,
+              staff.user_id,
               'student_ticket_reply',
               'New ticket reply',
               `Student replied to ticket: "${ticketSubject}"`,
@@ -2138,7 +2191,27 @@ app.patch('/api/tickets/:id/forward', async (req: Request, res: Response) => {
     return res.status(400).json({ error: "department_id or department_name is required" });
   }
 
+  if (!user_id) {
+    return res.status(400).json({ error: "user_id is required" });
+  }
+
   try {
+    // Check if user is admin
+    const userPkName = await getUserPkName();
+    const [userRows] = await db.query<RowDataPacket[]>(
+      `SELECT role FROM users WHERE ${userPkName} = ?`,
+      [user_id]
+    );
+
+    if (userRows.length === 0) {
+      return res.status(403).json({ error: "Invalid user" });
+    }
+
+    const userRole = userRows[0].role?.toString().toLowerCase();
+    if (userRole !== 'admin') {
+      return res.status(403).json({ error: "Only admins can forward tickets" });
+    }
+
     // Resolve department name and ID (if provided, validate against the departments table)
     let deptId: number | null = null;
     let deptName: string | null = null;
@@ -2196,6 +2269,30 @@ app.patch('/api/tickets/:id/forward', async (req: Request, res: Response) => {
       FROM tickets t 
       WHERE ${pkName} = ?
     `, [id]);
+
+    // Notify staff in the department about the forwarded ticket
+    try {
+      const userPkName = await getUserPkName();
+      const [staffUsers] = await db.query<RowDataPacket[]>(
+        `SELECT ${userPkName} AS user_id FROM users WHERE role = 'staff' AND department = ?`,
+        [deptName]
+      );
+
+      console.log(`📢 Notifying ${staffUsers.length} staff members in department "${deptName}" about forwarded ticket`);
+
+      for (const staff of staffUsers) {
+        await createNotification(
+          staff.user_id,
+          'ticket_assigned',
+          'New ticket assigned to your department',
+          `A ticket has been assigned to your department: "${rows[0]?.subject || 'Ticket'}"`,
+          parseInt(id)
+        );
+      }
+    } catch (notifError) {
+      console.error('Error creating notifications for ticket forwarding:', notifError);
+      // Don't fail the operation if notification creation fails
+    }
     
     res.json({ 
       success: true, 
@@ -2214,20 +2311,31 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
     const [ticketCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM tickets");
     const pkName = ticketCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'ticket_id')?.Field || 'id';
 
-    // Find tickets that haven't had responses for 5 days
+    // Find tickets that haven't had staff replies for 5 days
     const [overdueTickets] = await db.query<RowDataPacket[]>(`
       SELECT t.${pkName} as id, t.user_id, t.subject, t.status, t.created_at,
              MAX(tr.created_at) as last_response_date,
+             MAX(CASE WHEN LOWER(tr.role) IN ('staff', 'admin') THEN tr.created_at ELSE NULL END) as last_staff_response_date,
+             MAX(CASE WHEN LOWER(tr.role) = 'student' THEN tr.created_at ELSE NULL END) as last_student_response_date,
              u.role
       FROM tickets t
       LEFT JOIN ticket_response tr ON t.${pkName} = tr.ticket_id
       LEFT JOIN users u ON t.user_id = u.id
       WHERE t.status NOT IN ('resolved', 'closed')
       GROUP BY t.${pkName}, t.user_id, t.subject, t.status, t.created_at, u.role
-      HAVING last_response_date IS NULL 
-         AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
-         OR (last_response_date IS NOT NULL 
-         AND DATEDIFF(CURRENT_DATE, DATE(last_response_date)) >= 5)
+      HAVING (
+        last_staff_response_date IS NULL
+        AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
+      ) OR (
+        last_staff_response_date IS NULL
+        AND last_student_response_date IS NOT NULL
+        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+      ) OR (
+        last_staff_response_date IS NOT NULL
+        AND last_student_response_date IS NOT NULL
+        AND last_student_response_date > last_staff_response_date
+        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+      )
     `);
 
     let notificationsCreated = 0;
@@ -2237,6 +2345,18 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
       const userId = ticket.user_id;
       const subject = ticket.subject || 'Ticket';
       const userRole = ticket.role?.toLowerCase() || 'student';
+      const lastStaffResponseDate = ticket.last_staff_response_date ? new Date(ticket.last_staff_response_date) : null;
+      const lastStudentResponseDate = ticket.last_student_response_date ? new Date(ticket.last_student_response_date) : null;
+      const createdAt = new Date(ticket.created_at);
+
+      const overdueReference = lastStudentResponseDate && lastStudentResponseDate > createdAt
+        ? lastStudentResponseDate
+        : createdAt;
+      const staffRepliedAfterReference = lastStaffResponseDate && lastStaffResponseDate > overdueReference;
+
+      if (staffRepliedAfterReference) {
+        continue;
+      }
 
       // Notify students about their overdue tickets
       if (userRole === 'student') {
@@ -2244,33 +2364,40 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
           userId,
           'ticket_overdue',
           'Ticket overdue',
-          `Your ticket "${subject}" is overdue (no response for 5 days)`,
+          `Your ticket "${subject}" is overdue (no staff reply for 5 days)`,
           ticketId
         );
         notificationsCreated++;
-      } 
-      // Notify staff/admin about overdue tickets they're handling
-      else if (['staff', 'admin'].includes(userRole)) {
-        await createNotification(
-          userId,
-          'ticket_overdue_staff',
-          'Ticket overdue',
-          `Ticket "${subject}" is overdue (no update for 5 days)`,
-          ticketId
+
+        // Also notify staff and admins about overdue student tickets
+        const userPkName = await getUserPkName();
+        const [staffAdmins] = await db.query<RowDataPacket[]>(
+          `SELECT ${userPkName} AS user_id FROM users WHERE LOWER(role) IN ('staff', 'admin') AND is_disabled = 0`
         );
-        notificationsCreated++;
+
+        for (const account of staffAdmins) {
+          await createNotification(
+            account.user_id,
+            'ticket_overdue_staff',
+            'Overdue ticket',
+            `Ticket "${subject}" is overdue and has not received a staff reply for 5 days.`,
+            ticketId
+          );
+          notificationsCreated++;
+        }
       }
     }
 
     // Also notify admins about any overdue tickets in the system
     if (overdueTickets.length > 0) {
+      const userPkName = await getUserPkName();
       const [adminUsers] = await db.query<RowDataPacket[]>(
-        "SELECT id FROM users WHERE role = 'admin'"
+        `SELECT ${userPkName} AS user_id FROM users WHERE role = 'admin'`
       );
       
       for (const admin of adminUsers) {
         await createNotification(
-          admin.id,
+          admin.user_id,
           'overdue_tickets_detected',
           'Overdue tickets detected',
           `${overdueTickets.length} ticket(s) are overdue and need attention`,
@@ -2324,6 +2451,40 @@ app.post('/api/department-feedback', async (req: Request, res: Response) => {
       'INSERT INTO department_feedback (user_id, ticket_id, department, is_helpful, comment, feedback_completed, date_submitted) VALUES (?, ?, ?, ?, ?, TRUE, NOW())',
       [user_id || null, ticket_id || null, department, isHelpful, finalComment]
     );
+
+    // Notify staff only (not admin) that a student submitted department feedback
+    try {
+      const userPkName = await getUserPkName();
+      const [staffUsers] = await db.query<RowDataPacket[]>(
+        `SELECT ${userPkName} AS user_id FROM users WHERE role = 'staff'`
+      );
+
+      let feedbackMessage = `Student submitted feedback for the ${department} department.`;
+      if (ticket_id) {
+        const [ticketRows] = await db.query<RowDataPacket[]>(
+          'SELECT subject FROM tickets WHERE id = ? LIMIT 1',
+          [ticket_id]
+        );
+        const ticketSubject = ticketRows.length > 0 ? ticketRows[0].subject : 'ticket';
+        feedbackMessage = `Student submitted feedback for ticket "${ticketSubject}".`;
+      }
+
+      for (const staff of staffUsers) {
+        await createNotification(
+          staff.user_id,
+          'department_feedback_submitted',
+          'Student feedback submitted',
+          feedbackMessage,
+          ticket_id || undefined
+        );
+      }
+    } catch (notifError) {
+      console.error('Error creating feedback notification:', notifError);
+    }
+
+    if (user_id) {
+      await logAudit(req, user_id, 'Submitted department feedback', 'department_feedback', ticket_id ? ticket_id.toString() : undefined);
+    }
 
     res.status(201).json({ message: 'Department feedback saved' });
   } catch (error: unknown) {
@@ -2900,8 +3061,8 @@ app.get('/api/announcements', async (req: Request, res: Response) => {
     const params: (string | number)[] = [];
     if (hasAudience) {
       if (viewerRole === "admin") {
-        // Admins can only see announcements addressed to all, plus their own announcements
-        whereClause = "WHERE (a.audience = 'all'";
+        // Admins can see announcements addressed to all, staff, or admin, plus their own announcements
+        whereClause = "WHERE (a.audience IN ('all', 'staff', 'admin')";
         if (viewerUserId) {
           whereClause += " OR a.user_id = ?";
           params.push(viewerUserId);
@@ -2984,7 +3145,7 @@ app.post('/api/announcements', async (req: Request, res: Response) => {
     if (normalizedAudience === "student") {
       normalizedAudience = "students";
     }
-    const allowedAudience = ["all", "students", "staff"];
+    const allowedAudience = ["all", "students", "staff", "admin"];
     const finalAudience = allowedAudience.includes(normalizedAudience)
       ? normalizedAudience
       : normalizedRole === "admin"
@@ -3042,8 +3203,13 @@ app.post('/api/announcements', async (req: Request, res: Response) => {
         userQuery += ' AND LOWER(role) = ?';
         queryParams.push('student');
       } else if (finalAudience === 'staff') {
+        // Send staff-targeted announcements to both staff and admin users
+        userQuery += ' AND LOWER(role) IN (?, ?)';
+        queryParams.push('staff', 'admin');
+      } else if (finalAudience === 'admin') {
+        // Send admin-targeted announcements to admin users only
         userQuery += ' AND LOWER(role) = ?';
-        queryParams.push('staff');
+        queryParams.push('admin');
       }
       // For 'all', no additional filter needed
 
@@ -3182,8 +3348,8 @@ app.delete('/api/announcements/:id', async (req: Request, res: Response) => {
 
 // Notification endpoints
 app.get('/api/notifications/unread-count', async (req: Request, res: Response) => {
-  const { user_id } = req.query;
-  
+  const user_id = normalizeUserId(req.query.user_id ?? req.query.userId ?? req.query.id);
+
   if (!user_id) {
     return res.status(400).json({ error: 'user_id is required' });
   }
@@ -3202,7 +3368,7 @@ app.get('/api/notifications/unread-count', async (req: Request, res: Response) =
 });
 
 app.get('/api/notifications', async (req: Request, res: Response) => {
-  const { user_id } = req.query;
+  const user_id = normalizeUserId(req.query.user_id ?? req.query.userId ?? req.query.id);
   
   if (!user_id) {
     return res.status(400).json({ error: 'user_id is required' });
@@ -3210,10 +3376,10 @@ app.get('/api/notifications', async (req: Request, res: Response) => {
 
   try {
     const [notifications] = await db.query<RowDataPacket[]>(
-      `SELECT * FROM notifications 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
+      `SELECT ${NOTIFICATION_PK_NAME} AS id, user_id, type, title, message, ticket_id, announcement_id, is_read, created_at
+       FROM notifications
+       WHERE user_id = ?
+       ORDER BY created_at DESC`,
       [user_id]
     );
     res.json(notifications);
@@ -3225,7 +3391,7 @@ app.get('/api/notifications', async (req: Request, res: Response) => {
 
 app.patch('/api/notifications/:id/mark-as-read', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { user_id } = req.body;
+  const user_id = normalizeUserId(req.body.user_id ?? req.body.userId ?? req.body.id ?? req.query.user_id ?? req.query.userId ?? req.query.id);
 
   if (!user_id) {
     return res.status(400).json({ error: 'user_id is required' });
@@ -3233,7 +3399,7 @@ app.patch('/api/notifications/:id/mark-as-read', async (req: Request, res: Respo
 
   try {
     await db.query(
-      'UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?',
+      `UPDATE notifications SET is_read = 1 WHERE ${NOTIFICATION_PK_NAME} = ? AND user_id = ?`,
       [id, user_id]
     );
     res.json({ message: 'Notification marked as read' });
@@ -3244,7 +3410,7 @@ app.patch('/api/notifications/:id/mark-as-read', async (req: Request, res: Respo
 });
 
 app.patch('/api/notifications/mark-all-as-read', async (req: Request, res: Response) => {
-  const { user_id } = req.body;
+  const user_id = normalizeUserId(req.body.user_id ?? req.body.userId ?? req.body.id ?? req.query.user_id ?? req.query.userId ?? req.query.id);
 
   if (!user_id) {
     return res.status(400).json({ error: 'user_id is required' });
@@ -3265,20 +3431,28 @@ app.patch('/api/notifications/mark-all-as-read', async (req: Request, res: Respo
 // Delete notification endpoint
 app.delete('/api/notifications/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { user_id } = req.body;
+  const user_id = normalizeUserId(req.body.user_id ?? req.body.userId ?? req.body.id ?? req.query.user_id ?? req.query.userId ?? req.query.id);
 
   if (!id || !user_id) {
     return res.status(400).json({ error: 'id and user_id are required' });
   }
 
   try {
-    const [result] = await db.query(
-      'DELETE FROM notifications WHERE id = ? AND user_id = ?',
+    const [notificationCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM notifications");
+    const notificationPkName = notificationCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'notification_id')?.Field || NOTIFICATION_PK_NAME;
+
+    const [result] = await db.query<ResultSetHeader>(
+      `DELETE FROM notifications WHERE ${notificationPkName} = ? AND user_id = ?`,
       [id, user_id]
     );
-    
-    if ((result as any).affectedRows === 0) {
+
+    if (result.affectedRows === 0) {
+      console.warn(`Notification with ${notificationPkName}=${id} not found or not owned by user ${user_id}.`);
       return res.status(404).json({ error: 'Notification not found or not owned by user' });
+    }
+
+    if (user_id) {
+      await logAudit(req, user_id, 'Deleted notification', 'notification', id.toString());
     }
 
     res.json({ message: 'Notification deleted successfully' });
@@ -3288,50 +3462,6 @@ app.delete('/api/notifications/:id', async (req: Request, res: Response) => {
   }
 });
 
-// Announcement unread count endpoint
-app.get('/api/announcements/unread-count', async (req: Request, res: Response) => {
-  const { user_id } = req.query;
-  
-  if (!user_id) {
-    return res.status(400).json({ error: 'user_id is required' });
-  }
-
-  try {
-    const [result] = await db.query<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM announcement a
-       LEFT JOIN announcement_views av ON a.id = av.announcement_id AND av.user_id = ?
-       WHERE av.id IS NULL`,
-      [user_id]
-    );
-    const count = result[0]?.count || 0;
-    res.json({ count });
-  } catch (error: unknown) {
-    console.error('Error fetching unread announcement count:', error);
-    res.status(500).json({ error: 'Error fetching announcement count' });
-  }
-});
-
-app.patch('/api/announcements/:id/mark-as-read', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { user_id } = req.body;
-
-  if (!user_id) {
-    return res.status(400).json({ error: 'user_id is required' });
-  }
-
-  try {
-    await db.query(
-      `INSERT INTO announcement_views (user_id, announcement_id) 
-       VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE viewed_at = CURRENT_TIMESTAMP`,
-      [user_id, id]
-    );
-    res.json({ message: 'Announcement marked as read' });
-  } catch (error: unknown) {
-    console.error('Error marking announcement as read:', error);
-    res.status(500).json({ error: 'Error marking announcement as read' });
-  }
-});
 
 const runDeactivatedAccountCleanup = async () => {
   try {
@@ -3372,20 +3502,31 @@ const checkOverdueTickets = async () => {
     const [userCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM users");
     const userPkName = userCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'user_id')?.Field || 'id';
 
-    // Find tickets that haven't had responses for 5 days
+    // Find tickets that haven't had staff replies for 5 days
     const [overdueTickets] = await db.query<RowDataPacket[]>(`
       SELECT t.${ticketPkName} as id, t.user_id, t.subject, t.status, t.created_at, t.department,
              MAX(tr.created_at) as last_response_date,
+             MAX(CASE WHEN LOWER(tr.role) IN ('staff', 'admin') THEN tr.created_at ELSE NULL END) as last_staff_response_date,
+             MAX(CASE WHEN LOWER(tr.role) = 'student' THEN tr.created_at ELSE NULL END) as last_student_response_date,
              u.role
       FROM tickets t
       LEFT JOIN ${RESPONSE_TABLE} tr ON t.${ticketPkName} = tr.ticket_id
       LEFT JOIN users u ON t.user_id = u.${userPkName}
       WHERE t.status NOT IN ('resolved', 'closed')
       GROUP BY t.${ticketPkName}, t.user_id, t.subject, t.status, t.created_at, t.department, u.role
-      HAVING last_response_date IS NULL 
-         AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
-         OR (last_response_date IS NOT NULL 
-         AND DATEDIFF(CURRENT_DATE, DATE(last_response_date)) >= 5)
+      HAVING (
+        last_staff_response_date IS NULL
+        AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
+      ) OR (
+        last_staff_response_date IS NULL
+        AND last_student_response_date IS NOT NULL
+        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+      ) OR (
+        last_staff_response_date IS NOT NULL
+        AND last_student_response_date IS NOT NULL
+        AND last_student_response_date > last_staff_response_date
+        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+      )
     `);
 
     let notificationsCreated = 0;
@@ -3397,76 +3538,82 @@ const checkOverdueTickets = async () => {
       const subject = ticket.subject || 'Ticket';
       const department = ticket.department;
       const userRole = ticket.role?.toLowerCase() || 'student';
+      const lastStaffResponseDate = ticket.last_staff_response_date ? new Date(ticket.last_staff_response_date) : null;
+      const lastStudentResponseDate = ticket.last_student_response_date ? new Date(ticket.last_student_response_date) : null;
+      const createdAt = new Date(ticket.created_at);
 
-      // Check if we already notified about this ticket today to avoid spam
-      const [existingNotifications] = await db.query<RowDataPacket[]>(`
-        SELECT id FROM notifications 
-        WHERE user_id = ? AND ticket_id = ? AND type IN ('ticket_overdue', 'ticket_overdue_staff') 
-        AND DATE(created_at) = CURRENT_DATE
-      `, [userId, ticketId]);
+      const overdueReference = lastStudentResponseDate && lastStudentResponseDate > createdAt
+        ? lastStudentResponseDate
+        : createdAt;
+      const staffRepliedAfterReference = lastStaffResponseDate && lastStaffResponseDate > overdueReference;
 
-      if (existingNotifications.length === 0) {
-        // Notify students about their overdue tickets
-        if (userRole === 'student') {
-          await createNotification(
-            userId,
-            'ticket_overdue',
-            'Ticket overdue',
-            `Your ticket "${subject}" is overdue (no response for 5 days)`,
-            ticketId
-          );
-          notificationsCreated++;
-        } 
-        // Notify staff/admin about overdue tickets they're handling
-        else if (['staff', 'admin'].includes(userRole)) {
-          await createNotification(
-            userId,
-            'ticket_overdue_staff',
-            'Ticket overdue',
-            `Ticket "${subject}" is overdue (no update for 5 days)`,
-            ticketId
-          );
-          notificationsCreated++;
-        }
-      }
+      if (!staffRepliedAfterReference) {
+        // Check if we already notified about this ticket today to avoid spam
+        const [existingNotifications] = await db.query<RowDataPacket[]>(`
+          SELECT id FROM notifications 
+          WHERE user_id = ? AND ticket_id = ? AND type IN ('ticket_overdue', 'ticket_overdue_staff') 
+          AND DATE(created_at) = CURRENT_DATE
+        `, [userId, ticketId]);
 
-      // Auto-close tickets that are 5+ days overdue and create feedback request
-      const daysSinceLastActivity = ticket.last_response_date 
-        ? Math.floor((Date.now() - new Date(ticket.last_response_date).getTime()) / (1000 * 60 * 60 * 24))
-        : Math.floor((Date.now() - new Date(ticket.created_at).getTime()) / (1000 * 60 * 60 * 24));
-
-      if (daysSinceLastActivity >= 5) {
-        // Check if we already auto-closed this ticket
-        const [existingFeedback] = await db.query<RowDataPacket[]>(`
-          SELECT id FROM department_feedback 
-          WHERE ticket_id = ? AND auto_closed = TRUE
-        `, [ticketId]);
-
-        if (existingFeedback.length === 0) {
-          // Auto-close the ticket
-          await db.execute(
-            `UPDATE tickets SET status = 'Resolved', closed_at = CURRENT_TIMESTAMP WHERE ${pkName} = ?`,
-            [ticketId]
-          );
-
-          // Create feedback request for the department
-          if (department && userId) {
-            await db.execute(
-              `INSERT INTO department_feedback (user_id, ticket_id, department, feedback_requested, auto_closed, date_requested) 
-               VALUES (?, ?, ?, TRUE, TRUE, NOW())`,
-              [userId, ticketId, department]
-            );
-
-            // Notify the user about the auto-closure and feedback request
+        if (existingNotifications.length === 0) {
+          // Notify students about their overdue tickets
+          if (userRole === 'student') {
             await createNotification(
               userId,
-              'ticket_auto_closed',
-              'Ticket auto-closed',
-              `Your ticket "${subject}" has been automatically closed due to no response for 5 days. Please provide feedback about the ${department} department.`,
+              'ticket_overdue',
+              'Ticket overdue',
+              `Your ticket "${subject}" is overdue (no staff reply for 5 days)`,
               ticketId
             );
+            notificationsCreated++;
+          } 
+          // Notify staff/admin about overdue tickets they're handling
+          else if (['staff', 'admin'].includes(userRole)) {
+            await createNotification(
+              userId,
+              'ticket_overdue_staff',
+              'Ticket overdue',
+              `Ticket "${subject}" is overdue (no staff reply for 5 days)`,
+              ticketId
+            );
+            notificationsCreated++;
+          }
+        }
 
-            ticketsAutoClosed++;
+        const daysSinceReference = Math.floor((Date.now() - overdueReference.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysSinceReference >= 5) {
+          // Check if we already auto-closed this ticket
+          const [existingFeedback] = await db.query<RowDataPacket[]>(`
+            SELECT id FROM department_feedback 
+            WHERE ticket_id = ? AND auto_closed = TRUE
+          `, [ticketId]);
+
+          if (existingFeedback.length === 0) {
+            // Auto-close the ticket
+            await db.execute(
+              `UPDATE tickets SET status = 'Resolved', closed_at = CURRENT_TIMESTAMP WHERE ${pkName} = ?`,
+              [ticketId]
+            );
+
+            // Create feedback request for the department
+            if (department && userId) {
+              await db.execute(
+                `INSERT INTO department_feedback (user_id, ticket_id, department, feedback_requested, auto_closed, date_requested) 
+                 VALUES (?, ?, ?, TRUE, TRUE, NOW())`,
+                [userId, ticketId, department]
+              );
+
+              // Notify the user about the auto-closure and feedback request
+              await createNotification(
+                userId,
+                'ticket_auto_closed',
+                'Ticket auto-closed',
+                `Your ticket "${subject}" has been automatically closed due to no staff reply for 5 days. Please provide feedback about the ${department} department.`,
+                ticketId
+              );
+
+              ticketsAutoClosed++;
+            }
           }
         }
       }
@@ -3482,13 +3629,14 @@ const checkOverdueTickets = async () => {
       `);
 
       if (existingAdminNotifications.length === 0) {
+        const userPkName = await getUserPkName();
         const [adminUsers] = await db.query<RowDataPacket[]>(
-          "SELECT id FROM users WHERE role = 'admin'"
+          `SELECT ${userPkName} AS user_id FROM users WHERE role = 'admin'`
         );
         
         for (const admin of adminUsers) {
           await createNotification(
-            admin.id,
+            admin.user_id,
             'overdue_tickets_detected',
             'Overdue tickets detected',
             `${overdueTickets.length} ticket(s) are overdue and need attention`,

@@ -8,7 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User as UserIcon, Bell } from "lucide-react";
-import { performLogout } from "@/lib/utils";
+import { performLogout, getDashboardPath } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import logo from "@/assets/uc-smarthelp-logo.jpg";
 
@@ -30,7 +30,8 @@ interface User {
 }
 
 interface Notification {
-  id: number;
+  id?: number;
+  notification_id?: number;
   type: string;
   title: string;
   message: string;
@@ -49,6 +50,9 @@ const Navbar = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+
+  const getUserId = (user: User | null) => user?.userId || user?.id || user?.user_id || null;
 
   useEffect(() => {
     const syncUserFromLocalStorage = () => {
@@ -75,19 +79,21 @@ const Navbar = () => {
     };
   }, [location.pathname]);
 
-  // Fetch unread notification count
+  // Fetch unread count and notifications anytime the logged in user changes
   useEffect(() => {
-    if (user && (user.userId || user.id || user.user_id)) {
-      const userId = user.userId || user.id || user.user_id;
-      fetchUnreadCount(userId as number);
-      
-      // Refresh count every 30 seconds
+    const userId = getUserId(user);
+    if (userId) {
+      fetchUnreadCount(userId);
+      fetchNotifications(userId);
+
       const interval = setInterval(() => {
         fetchUnreadCount(userId as number);
       }, 30000);
-      
       return () => clearInterval(interval);
     }
+
+    setUnreadCount(0);
+    setNotifications([]);
   }, [user]);
 
   const fetchUnreadCount = async (userId: number) => {
@@ -104,23 +110,52 @@ const Navbar = () => {
   };
 
   const fetchNotifications = async (userId: number) => {
+    setIsNotificationsLoading(true);
     try {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
       const response = await fetch(`${API_URL}/api/notifications?user_id=${userId}`);
       if (response.ok) {
         const data = await response.json();
         setNotifications(data);
+      } else {
+        console.error("Error fetching notifications: status", response.status);
+        setNotifications([]);
       }
     } catch (error) {
       console.error("Error fetching notifications:", error);
+      setNotifications([]);
+    } finally {
+      setIsNotificationsLoading(false);
     }
   };
 
+  const getNotificationId = (notification: Notification) => notification.notification_id ?? notification.id ?? 0;
+
   const handleNotificationBellClick = async () => {
-    if (user && (user.userId || user.id || user.user_id)) {
-      const userId = user.userId || user.id || user.user_id;
+    const userId = getUserId(user);
+    if (userId) {
       await fetchNotifications(userId as number);
-      setShowNotifications(!showNotifications);
+      setShowNotifications((prev) => !prev);
+    }
+  };
+
+  const markAsRead = async (notificationId: number) => {
+    if (!user || !(user.userId || user.id || user.user_id)) return;
+    const userId = user.userId || user.id || user.user_id;
+
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+      await fetch(`${API_URL}/api/notifications/${notificationId}/mark-as-read`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId })
+      });
+      setNotifications(prev => prev.map(n => 
+        getNotificationId(n) === notificationId ? { ...n, is_read: 1 } : n
+      ));
+      fetchUnreadCount(userId as number);
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
     }
   };
 
@@ -193,21 +228,6 @@ const Navbar = () => {
   
   // High-precision login check
   const isLoggedIn = (user && (user.userId || user.id || user.user_id)) || isGuest;
-
-  const getDashboardPath = () => {
-    const role = (user?.role || "student").toLowerCase();
-    const department = (user?.department || "").toLowerCase();
-    
-    if (role === "admin") return "/AdminDashboard";
-    if (role === "staff") {
-      if (department === "scholarship") {
-        return "/ScholarshipDashboard";
-      }
-      return "/AccountingDashboard";
-    }
-    if (isGuest) return "/GuestDashboard";
-    return "/StudentDashboard";
-  };
 
   const handleDashboardClick = () => {
     const path = getDashboardPath();
@@ -325,7 +345,11 @@ const Navbar = () => {
                 </div>
 
                 {/* Notifications List */}
-                {recentNotifications.length === 0 ? (
+                {isNotificationsLoading ? (
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    Loading notifications...
+                  </div>
+                ) : recentNotifications.length === 0 ? (
                   <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                     No notifications yet
                   </div>
@@ -337,63 +361,65 @@ const Navbar = () => {
                           {dateGroup}
                         </div>
                         <div className="space-y-2">
-                          {groupNotifications.slice(0, 5).map((notification) => (
-                            <div
-                              key={notification.id}
-                              className={`p-3 rounded-lg text-sm cursor-pointer transition-colors ${
-                                notification.is_read === 0
-                                  ? 'bg-primary/5 border border-primary/20'
-                                  : 'bg-muted/50'
-                              } hover:bg-muted`}
-                              onClick={() => {
-                                // Mark as read if not already
-                                if (notification.is_read === 0) {
-                                  markAsRead(notification.id);
-                                }
-                                // Navigate based on notification type
-                                if (notification.type === 'ticket_reply' || notification.type === 'student_ticket_reply' || notification.type === 'ticket_status_changed' || notification.type === 'ticket_overdue') {
-                                  navigate('/tickets');
-                                } else if (notification.type === 'announcement') {
-                                  // Navigate to announcements page with the specific announcement ID
-                                  navigate(`/announcements#announcement-${notification.announcement_id || notification.id}`);
-                                } else if (notification.type === 'ticket_auto_closed') {
-                                  // Show department feedback dialog
-                                  window.dispatchEvent(new CustomEvent('show-department-feedback'));
-                                } else if (notification.type === 'new_ticket' || notification.type === 'overdue_tickets_detected') {
-                                  navigate('/tickets');
-                                }
-                              }}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex-1">
-                                  <p className="font-semibold text-foreground">{notification.title}</p>
-                                  {notification.message && (
-                                    <p className="text-xs text-muted-foreground mt-1">{notification.message}</p>
+                          {groupNotifications.slice(0, 5).map((notification) => {
+                            const notificationId = getNotificationId(notification);
+                            return (
+                              <div
+                                key={notificationId || `${notification.type}-${notification.created_at}`}
+                                className={`p-3 rounded-lg text-sm cursor-pointer transition-colors ${
+                                  notification.is_read === 0
+                                    ? 'bg-primary/5 border border-primary/20'
+                                    : 'bg-muted/50'
+                                } hover:bg-muted`}
+                                onClick={() => {
+                                  if (notification.is_read === 0 && notificationId) {
+                                    markAsRead(notificationId);
+                                  }
+                                  if (['ticket_reply', 'student_ticket_reply', 'ticket_status_changed', 'ticket_overdue', 'ticket_overdue_staff', 'ticket_auto_closed', 'department_feedback_submitted', 'new_ticket', 'overdue_tickets_detected'].includes(notification.type)) {
+                                    const userRole = user?.role?.toLowerCase();
+                                    if (userRole === 'admin' || userRole === 'staff') {
+                                      navigate(getDashboardPath());
+                                    } else {
+                                      navigate('/tickets');
+                                    }
+                                  } else if (notification.type === 'announcement') {
+                                    navigate(`/announcements#announcement-${notification.announcement_id || notificationId}`);
+                                  }
+                                }}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1">
+                                    <p className="font-semibold text-foreground">{notification.title}</p>
+                                    {notification.message && (
+                                      <p className="text-xs text-muted-foreground mt-1">{notification.message}</p>
+                                    )}
+                                  </div>
+                                  {notification.is_read === 0 && (
+                                    <div className="h-2 w-2 rounded-full bg-red-500 mt-1 flex-shrink-0" />
                                   )}
                                 </div>
-                                {notification.is_read === 0 && (
-                                  <div className="h-2 w-2 rounded-full bg-red-500 mt-1 flex-shrink-0" />
-                                )}
+                                <p className="text-[10px] text-muted-foreground mt-2">
+                                  {new Date(notification.created_at).toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit' 
+                                  })}
+                                </p>
                               </div>
-                              <p className="text-[10px] text-muted-foreground mt-2">
-                                {new Date(notification.created_at).toLocaleTimeString('en-US', { 
-                                  hour: '2-digit', 
-                                  minute: '2-digit' 
-                                })}
-                              </p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
-                    
-                    {notifications.length > 5 && (
+                    {notifications.length > 0 && (
                       <div className="pt-2 border-t">
                         <button
-                          onClick={() => navigate('/notifications')}
+                          onClick={() => {
+                            setShowNotifications(false);
+                            navigate('/notifications');
+                          }}
                           className="w-full text-center text-sm font-medium text-primary hover:underline py-2"
                         >
-                          Show more notifications →
+                          See more notifications →
                         </button>
                       </div>
                     )}

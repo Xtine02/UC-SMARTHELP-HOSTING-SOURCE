@@ -3,12 +3,13 @@ import { Bell, Trash2, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/lib/auth';
+import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 
 interface Notification {
-  id: number;
+  id?: number;
+  notification_id?: number;
   user_id: number;
   type: string;
   title: string;
@@ -22,17 +23,40 @@ interface Notification {
 const NotificationsPage: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
+  const [showAllNotifications, setShowAllNotifications] = useState(false);
+  const { user: authUser } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const fetchNotifications = async () => {
-    if (!user || (!user.userId && !user.id && !user.user_id)) return;
+  const getCurrentUser = () => {
+    if (authUser && (authUser.userId || authUser.id || authUser.user_id)) {
+      return authUser as any;
+    }
 
-    const userId = user.userId || user.id || user.user_id;
+    try {
+      const storedUser = localStorage.getItem('user');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        if (parsed && (parsed.userId || parsed.id || parsed.user_id)) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore parse errors and fallback to authUser
+    }
+
+    return authUser;
+  };
+
+  const getCurrentUserId = (user: any) => user?.userId || user?.id || user?.user_id || null;
+
+  const fetchNotifications = async () => {
+    const currentUser = getCurrentUser();
+    const userId = getCurrentUserId(currentUser);
+    if (!userId) return;
     try {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      const response = await fetch(`${API_URL}/api/notifications?user_id=${userId}`);
+      const response = await fetch(`${API_URL}/api/notifications?user_id=${encodeURIComponent(userId)}`);
       if (response.ok) {
         const data = await response.json();
         setNotifications(data);
@@ -49,15 +73,34 @@ const NotificationsPage: React.FC = () => {
     }
   };
 
+  const getNotificationId = (notification: Notification) => notification.notification_id ?? notification.id ?? 0;
+
+  const getDashboardPath = () => {
+    const userJson = localStorage.getItem('user');
+    const user = userJson ? JSON.parse(userJson) : null;
+    const role = (user?.role || 'student').toString().toLowerCase();
+    const department = (user?.department || '').toString().toLowerCase();
+
+    if (role === 'admin') return '/AdminDashboard';
+    if (role === 'staff') return department === 'scholarship' ? '/ScholarshipDashboard' : '/AccountingDashboard';
+    if (localStorage.getItem('uc_guest') === '1') return '/GuestDashboard';
+    return '/StudentDashboard';
+  };
+
   const markAsRead = async (notificationId: number) => {
+    const currentUser = getCurrentUser();
+    const userId = getCurrentUserId(currentUser);
+    if (!userId) return;
+
     try {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      await fetch(`${API_URL}/api/notifications/${notificationId}/read`, {
+      await fetch(`${API_URL}/api/notifications/${notificationId}/mark-as-read`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
       });
       setNotifications(prev => prev.map(n => 
-        n.id === notificationId ? { ...n, is_read: 1 } : n
+        getNotificationId(n) === notificationId ? { ...n, is_read: 1 } : n
       ));
     } catch (error) {
       console.error("Error marking notification as read:", error);
@@ -65,12 +108,18 @@ const NotificationsPage: React.FC = () => {
   };
 
   const deleteNotification = async (notificationId: number) => {
+    const currentUser = getCurrentUser();
+    const userId = getCurrentUserId(currentUser);
+    if (!userId) return;
+
     try {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
       await fetch(`${API_URL}/api/notifications/${notificationId}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
       });
-      setNotifications(prev => prev.filter(n => n.id !== notificationId));
+      setNotifications(prev => prev.filter(n => getNotificationId(n) !== notificationId));
       toast({
         title: "Success",
         description: "Notification deleted",
@@ -86,9 +135,10 @@ const NotificationsPage: React.FC = () => {
   };
 
   const markAllAsRead = async () => {
-    if (!user || (!user.userId && !user.id && !user.user_id)) return;
+    const currentUser = getCurrentUser();
+    const userId = getCurrentUserId(currentUser);
+    if (!userId) return;
 
-    const userId = user.userId || user.id || user.user_id;
     try {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
       await fetch(`${API_URL}/api/notifications/mark-all-as-read`, {
@@ -111,14 +161,18 @@ const NotificationsPage: React.FC = () => {
     }
   };
 
-  // Group notifications by day
+  // Group notifications by day and preserve descending order
   const groupNotificationsByDay = (notifications: Notification[]) => {
+    const sortedNotifications = [...notifications].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
     const groups: { [key: string]: Notification[] } = {};
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    notifications.forEach(notification => {
+    sortedNotifications.forEach(notification => {
       const notificationDate = new Date(notification.created_at);
       const dateKey = notificationDate.toDateString();
 
@@ -128,11 +182,11 @@ const NotificationsPage: React.FC = () => {
       } else if (notificationDate.toDateString() === yesterday.toDateString()) {
         groupKey = 'Yesterday';
       } else {
-        groupKey = notificationDate.toLocaleDateString('en-US', { 
-          weekday: 'long', 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
+        groupKey = notificationDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
         });
       }
 
@@ -147,10 +201,19 @@ const NotificationsPage: React.FC = () => {
 
   useEffect(() => {
     fetchNotifications();
-  }, [user]);
+  }, [authUser]);
 
   const groupedNotifications = groupNotificationsByDay(notifications);
-  const notificationEntries = Object.entries(groupedNotifications);
+  const notificationCount = notifications.length;
+  const visibleNotificationEntries = Object.entries(
+    showAllNotifications || notificationCount <= 5
+      ? groupedNotifications
+      : groupNotificationsByDay(
+          [...notifications]
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            .slice(0, 5)
+        )
+  );
   const unreadCount = notifications.filter(n => n.is_read === 0).length;
 
   if (loading) {
@@ -189,7 +252,7 @@ const NotificationsPage: React.FC = () => {
         </div>
 
         {/* Notifications */}
-        {notificationEntries.length === 0 ? (
+        {visibleNotificationEntries.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Bell className="h-16 w-16 text-muted-foreground mb-4" />
@@ -201,7 +264,7 @@ const NotificationsPage: React.FC = () => {
           </Card>
         ) : (
           <div className="space-y-6">
-            {notificationEntries.map(([dateGroup, groupNotifications]) => (
+            {visibleNotificationEntries.map(([dateGroup, groupNotifications]) => (
               <div key={dateGroup}>
                 <div className="flex items-center gap-2 mb-4">
                   <h2 className="text-lg font-semibold">{dateGroup}</h2>
@@ -210,89 +273,115 @@ const NotificationsPage: React.FC = () => {
                   </Badge>
                 </div>
                 <div className="space-y-3">
-                  {groupNotifications.map((notification) => (
-                    <Card 
-                      key={notification.id} 
-                      className={`transition-colors cursor-pointer ${
-                        notification.is_read === 0 
-                          ? 'border-primary/20 bg-primary/5' 
-                          : 'hover:bg-muted/50'
-                      }`}
-                      onClick={() => {
-                        // Mark as read if not already
-                        if (notification.is_read === 0) {
-                          markAsRead(notification.id);
-                        }
-                        // Navigate based on notification type
-                        if (['ticket_reply', 'student_ticket_reply', 'ticket_status_changed', 'ticket_overdue', 'status_updated_by_you'].includes(notification.type)) {
-                          navigate('/tickets');
-                        } else if (notification.type === 'announcement') {
-                          navigate('/announcements');
-                        } else if (['new_ticket', 'overdue_tickets_detected'].includes(notification.type)) {
-                          navigate('/tickets');
-                        }
-                      }}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-semibold">{notification.title}</h3>
-                              {notification.is_read === 0 && (
-                                <div className="h-2 w-2 rounded-full bg-red-500" />
-                              )}
-                            </div>
-                            <p className="text-sm text-muted-foreground mb-2">
-                              {notification.message}
-                            </p>
-                            <div className="flex items-center justify-between">
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(notification.created_at).toLocaleString('en-US', {
-                                  weekday: 'long',
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit'
-                                })}
+                  {groupNotifications.map((notification) => {
+                    const notificationId = getNotificationId(notification);
+                    return (
+                      <Card 
+                        key={notificationId || `${notification.type}-${notification.created_at}`} 
+                        className={`transition-colors cursor-pointer ${
+                          notification.is_read === 0 
+                            ? 'border-primary/20 bg-primary/5' 
+                            : 'hover:bg-muted/50'
+                        }`}
+                        onClick={() => {
+                          if (notification.is_read === 0 && notificationId) {
+                            markAsRead(notificationId);
+                          }
+                          if (['ticket_reply', 'student_ticket_reply', 'ticket_status_changed', 'ticket_overdue', 'ticket_overdue_staff', 'ticket_auto_closed', 'status_updated_by_you', 'department_feedback_submitted', 'new_ticket', 'overdue_tickets_detected', 'ticket_assigned'].includes(notification.type)) {
+                            // Check if user is staff/admin and redirect to their dashboard instead of tickets page
+                            const userJson = localStorage.getItem("user");
+                            const user = userJson ? JSON.parse(userJson) : null;
+                            const role = (user?.role || "").toString().toLowerCase();
+                            
+                            if (role === 'staff' || role === 'admin') {
+                              navigate(getDashboardPath());
+                            } else {
+                              navigate('/tickets');
+                            }
+                          } else if (notification.type === 'announcement') {
+                            navigate('/announcements');
+                          }
+                        }}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <h3 className="font-semibold">{notification.title}</h3>
+                                {notification.is_read === 0 && (
+                                  <div className="h-2 w-2 rounded-full bg-red-500" />
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground mb-2">
+                                {notification.message}
                               </p>
-                              {notification.is_read === 0 && (
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(notification.created_at).toLocaleString('en-US', {
+                                    weekday: 'long',
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })}
+                                </p>
+                                {notification.is_read === 0 && notificationId && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      markAsRead(notificationId);
+                                    }}
+                                  >
+                                    Mark as read
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {notification.is_read === 0 && notificationId && (
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => markAsRead(notification.id)}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    markAsRead(notificationId);
+                                  }}
                                 >
                                   Mark as read
                                 </Button>
                               )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {notification.is_read === 0 && (
                               <Button
                                 size="sm"
-                                variant="outline"
-                                onClick={() => markAsRead(notification.id)}
+                                variant="ghost"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (notificationId) deleteNotification(notificationId);
+                                }}
+                                className="text-destructive hover:text-destructive"
                               >
-                                Mark as read
+                                <Trash2 className="h-4 w-4" />
                               </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => deleteNotification(notification.id)}
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            </div>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
             ))}
+            {notificationCount > 5 && (
+              <div className="mt-6 flex justify-center">
+                <Button variant="outline" onClick={() => setShowAllNotifications(prev => !prev)}>
+                  {showAllNotifications
+                    ? 'Show fewer notifications'
+                    : `See more notifications (${notificationCount - 5} more)`}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
