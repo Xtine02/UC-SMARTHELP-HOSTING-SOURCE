@@ -53,6 +53,7 @@ const Navbar = () => {
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
 
   const getUserId = (user: User | null) => user?.userId || user?.id || user?.user_id || null;
+  const currentUserId = getUserId(user);
 
   useEffect(() => {
     const syncUserFromLocalStorage = () => {
@@ -79,12 +80,34 @@ const Navbar = () => {
     };
   }, [location.pathname]);
 
+  const isStaffOrAdmin = (user?.role || '').toString().trim().toLowerCase() === 'staff' || (user?.role || '').toString().trim().toLowerCase() === 'admin';
+
+  const checkOverdueTickets = async () => {
+    if (!currentUserId || !isStaffOrAdmin) return;
+
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${API_URL}/api/check-overdue-tickets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUserId }),
+      });
+
+      if (response.ok) {
+        window.dispatchEvent(new Event('ticket-updated'));
+      }
+    } catch (error) {
+      console.error('Error checking overdue tickets:', error);
+    }
+  };
+
   // Fetch unread count and notifications anytime the logged in user changes
   useEffect(() => {
     const userId = getUserId(user);
     if (userId) {
       fetchUnreadCount(userId);
       fetchNotifications(userId);
+      checkOverdueTickets();
 
       // Poll for unread count updates every 5 seconds for real-time badge
       const interval = setInterval(() => {
@@ -133,10 +156,9 @@ const Navbar = () => {
   const getNotificationId = (notification: Notification) => notification.notification_id ?? notification.id ?? 0;
 
   const handleNotificationBellClick = async () => {
-    const userId = getUserId(user);
-    if (userId) {
-      await fetchNotifications(userId as number);
-      setShowNotifications((prev) => !prev);
+    if (currentUserId) {
+      await fetchNotifications(currentUserId as number);
+      setShowNotifications(true);
     }
   };
 
@@ -316,7 +338,15 @@ const Navbar = () => {
         {/* User Actions */}
         <div className="flex items-center gap-3">
           {isLoggedIn && !isGuest && (
-            <DropdownMenu open={showNotifications} onOpenChange={setShowNotifications}>
+            <DropdownMenu
+            open={showNotifications}
+            onOpenChange={(open) => {
+              if (open && currentUserId) {
+                void fetchNotifications(currentUserId as number);
+              }
+              setShowNotifications(open);
+            }}
+          >
               <DropdownMenuTrigger asChild>
                 <button 
                   onClick={handleNotificationBellClick}

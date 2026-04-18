@@ -28,6 +28,7 @@ const db = mysql.createPool({
 });
 
 const OVERDUE_TICKET_DEMO_MINUTES = 1; // demo threshold only
+const OVERDUE_WARNING_MINUTES = 40; // warn staff after 40 minutes unattended
 const OVERDUE_TICKET_TEXT = '5 days'; // preserve user-facing wording
 const OVERDUE_CHECK_INTERVAL_MS = 1 * 60 * 1000; // every minute for demo
 
@@ -2355,7 +2356,7 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
              MAX(CASE WHEN LOWER(tr.role) = 'student' THEN tr.created_at ELSE NULL END) as last_student_response_date,
              u.role
       FROM tickets t
-      LEFT JOIN ticket_response tr ON t.${pkName} = tr.ticket_id
+      LEFT JOIN ${RESPONSE_TABLE} tr ON t.${pkName} = tr.ticket_id
       LEFT JOIN users u ON t.user_id = u.${userPkName}
       WHERE t.status NOT IN ('resolved', 'closed')
       GROUP BY t.${pkName}, t.user_id, t.subject, t.status, t.created_at, u.role
@@ -3587,6 +3588,37 @@ const checkOverdueTickets = async () => {
       console.log(`Ticket ${ticketId}: staffRepliedAfterReference=${staffRepliedAfterReference}`);
 
       if (!staffRepliedAfterReference) {
+        const minutesSinceReference = Math.floor((Date.now() - overdueReference.getTime()) / (1000 * 60));
+        console.log(`Ticket ${ticketId}: minutesSinceReference=${minutesSinceReference}, threshold=${OVERDUE_TICKET_DEMO_MINUTES}`);
+
+        // Warn staff when a ticket has not been attended to and is nearing overdue
+        if (userRole === 'student' && OVERDUE_WARNING_MINUTES > 0 && minutesSinceReference >= OVERDUE_WARNING_MINUTES) {
+          const [existingWarnings] = await db.query<RowDataPacket[]>(`
+            SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
+            WHERE ticket_id = ? AND type = 'ticket_attention_warning' 
+            AND DATE(created_at) = CURRENT_DATE
+          `, [ticketId]);
+
+          if (existingWarnings.length === 0) {
+            const userPkName = await getUserPkName();
+            const [staffAdmins] = await db.query<RowDataPacket[]>(
+              `SELECT ${userPkName} AS user_id FROM users WHERE LOWER(role) IN ('staff', 'admin') AND is_disabled = 0`
+            );
+
+            for (const account of staffAdmins) {
+              console.log(`Creating attention warning for staff user ${account.user_id} for ticket ${ticketId}`);
+              await createNotification(
+                account.user_id,
+                'ticket_attention_warning',
+                'Open ticket needs attention',
+                'There is an open ticket that has not been attended to.',
+                ticketId
+              );
+              notificationsCreated++;
+            }
+          }
+        }
+
         // Check if we already notified about this ticket today to avoid spam
         const [existingNotifications] = await db.query<RowDataPacket[]>(`
           SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
@@ -3608,6 +3640,28 @@ const checkOverdueTickets = async () => {
               ticketId
             );
             notificationsCreated++;
+
+            // Also notify staff/admin about overdue student tickets once per day
+            const [staffAdmins] = await db.query<RowDataPacket[]>(
+              `SELECT ${userPkName} AS user_id FROM users WHERE LOWER(role) IN ('staff', 'admin') AND is_disabled = 0`
+            );
+            for (const account of staffAdmins) {
+              const [existingStaffNotification] = await db.query<RowDataPacket[]>(
+                `SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications WHERE user_id = ? AND ticket_id = ? AND type = 'ticket_overdue_staff' AND DATE(created_at) = CURRENT_DATE`,
+                [account.user_id, ticketId]
+              );
+              if (existingStaffNotification.length === 0) {
+                console.log(`Creating overdue notification for staff user ${account.user_id} for ticket ${ticketId}`);
+                await createNotification(
+                  account.user_id,
+                  'ticket_overdue_staff',
+                  'Overdue ticket',
+                  `Ticket "${subject}" is overdue and has not received a staff reply for 5 days.`,
+                  ticketId
+                );
+                notificationsCreated++;
+              }
+            }
           } 
           // Notify staff/admin about overdue tickets they're handling
           else if (['staff', 'admin'].includes(userRole)) {
@@ -3626,9 +3680,6 @@ const checkOverdueTickets = async () => {
         }
 
         // Auto-resolve ticket after overdue threshold
-        const minutesSinceReference = Math.floor((Date.now() - overdueReference.getTime()) / (1000 * 60));
-        console.log(`Ticket ${ticketId}: minutesSinceReference=${minutesSinceReference}, threshold=${OVERDUE_TICKET_DEMO_MINUTES}`);
-        
         if (minutesSinceReference >= OVERDUE_TICKET_DEMO_MINUTES) {
           // Check if already resolved
           if (ticket.status !== 'resolved' && ticket.status !== 'closed') {

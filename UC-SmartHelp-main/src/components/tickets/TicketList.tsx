@@ -221,10 +221,12 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
   useEffect(() => {
     fetchTickets();
 
+    const interval = setInterval(fetchTickets, 5000);
     const handleTicketUpdated = () => fetchTickets();
     window.addEventListener('ticket-updated', handleTicketUpdated);
 
     return () => {
+      clearInterval(interval);
       window.removeEventListener('ticket-updated', handleTicketUpdated);
     };
   }, [departmentFilter]);
