@@ -94,7 +94,7 @@ const GuestDashboard = () => {
                   <MessagesSquare className="h-7 w-7 text-primary" />
                 </div>
                 <span className="text-lg font-bold text-foreground">Chat History</span>
-                <p className="text-sm text-muted-foreground text-center">View and continue your guest chatbot conversation</p>
+                <p className="text-sm text-muted-foreground text-center">View your guest chatbot conversation</p>
               </button>
             </div>
 

@@ -38,14 +38,18 @@ const WebsiteFeedbackDialog = ({ open, onClose, onSubmitted }: Props) => {
       const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
       const userId = user?.userId || user?.id || null;
 
+      const body: any = {
+        is_helpful: helpful,
+        comment: comment.trim() || null
+      };
+      if (userId) {
+        body.user_id = userId;
+      }
+
       const response = await fetch(`${API_URL}/api/website-feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          is_helpful: helpful,
-          comment: comment.trim() || null
-        })
+        body: JSON.stringify(body)
       });
 
       const data = await response.json();
@@ -62,6 +66,7 @@ const WebsiteFeedbackDialog = ({ open, onClose, onSubmitted }: Props) => {
         handleClose();
         onSubmitted?.();
       } else {
+        console.error("Feedback submission failed:", data);
         throw new Error(data.error || data.details || "Failed to submit feedback");
       }
     } catch (error) {

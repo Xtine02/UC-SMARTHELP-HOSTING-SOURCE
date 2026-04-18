@@ -41,6 +41,12 @@ const initializeDatabase = async () => {
         date_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    const [websiteColumns] = await connection.query("SHOW COLUMNS FROM website_feedback");
+    const userIdColumn = websiteColumns.find((c) => c.Field === 'user_id');
+    if (userIdColumn && userIdColumn.Null === 'NO') {
+      await connection.query("ALTER TABLE website_feedback MODIFY COLUMN user_id INT NULL");
+    }
   } finally {
     connection.release();
   }
@@ -195,9 +201,10 @@ app.post('/api/website-feedback', async (req, res) => {
       return res.status(400).json({ error: "is_helpful field is required" });
     }
 
+    const userIdValue = typeof user_id !== 'undefined' ? user_id : null;
     const [result] = await db.query(
       'INSERT INTO website_feedback (user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, NOW())',
-      [user_id || null, is_helpful, comment || null]
+      [userIdValue, is_helpful, comment || null]
     );
 
     console.log('✅ Feedback stored with ID:', result.insertId);

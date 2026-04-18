@@ -365,6 +365,11 @@ const initializeDatabase = async () => {
           `ALTER TABLE website_feedback MODIFY COLUMN ${existingIdColumn.Field} INT NOT NULL AUTO_INCREMENT`
         );
       }
+
+      const userIdColumn = websiteColumns.find((c) => c.Field === 'user_id');
+      if (userIdColumn && userIdColumn.Null === 'NO') {
+        await connection.query("ALTER TABLE website_feedback MODIFY COLUMN user_id INT NULL");
+      }
     } catch (err: unknown) {
       console.error("Error migrating website_feedback table:", err);
     }
@@ -3015,12 +3020,13 @@ app.post('/api/website-feedback', async (req: Request, res: Response) => {
     const idColumn = feedbackColumns.find((c) => ["web_feedback_id", "id"].includes(c.Field))?.Field || "web_feedback_id";
     const idDef = feedbackColumns.find((c) => c.Field === idColumn);
     const hasAutoIncrementId = (idDef?.Extra || "").toLowerCase().includes("auto_increment");
+    const userIdValue = typeof user_id !== 'undefined' ? user_id : null;
 
     let result: ResultSetHeader;
     if (hasAutoIncrementId) {
       const [insertResult] = await db.query<ResultSetHeader>(
         `INSERT INTO website_feedback (user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, NOW())`,
-        [user_id || null, is_helpful, comment || null]
+        [userIdValue, is_helpful, comment || null]
       );
       result = insertResult;
     } else {
@@ -3030,7 +3036,7 @@ app.post('/api/website-feedback', async (req: Request, res: Response) => {
       const nextId = Number(nextRows[0]?.next_id || 1);
       const [insertResult] = await db.query<ResultSetHeader>(
         `INSERT INTO website_feedback (${idColumn}, user_id, is_helpful, comment, date_submitted) VALUES (?, ?, ?, ?, NOW())`,
-        [nextId, user_id || null, is_helpful, comment || null]
+        [nextId, userIdValue, is_helpful, comment || null]
       );
       result = insertResult;
     }

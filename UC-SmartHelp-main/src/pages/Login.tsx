@@ -184,6 +184,7 @@ const Login = () => {
     document.documentElement.classList.remove("dark");
     window.dispatchEvent(new Event('guest-logout'));
     window.dispatchEvent(new Event('profile-updated'));
+    window.dispatchEvent(new Event('guest-login'));
     toast({ title: "Guest Mode Enabled" });
     navigate("/GuestDashboard", { replace: true });
   };

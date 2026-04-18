@@ -107,12 +107,43 @@ const App = () => {
         console.error("Failed to parse user from storage:", e);
       }
     };
+    const handleGuestLogout = () => {
+      if (feedbackTimeoutRef.current) {
+        clearTimeout(feedbackTimeoutRef.current);
+      }
+      setShowWebsiteFeedback(false);
+      sessionStorage.removeItem("website_feedback_shown_session");
+    };
+    const handleGuestLogin = () => {
+      console.log('👤 Guest logged in. Starting 30-second countdown for website feedback');
+      
+      // Clear any existing timeout
+      if (feedbackTimeoutRef.current) {
+        clearTimeout(feedbackTimeoutRef.current);
+      }
+
+      // Set new timeout for 30 seconds
+      feedbackTimeoutRef.current = setTimeout(() => {
+        console.log('⏰ 30 seconds elapsed - checking if feedback should show');
+        // Only show if feedback hasn't been shown/skipped in this session
+        if (!sessionStorage.getItem("website_feedback_shown_session")) {
+          console.log('📢 Showing website feedback dialog');
+          setShowWebsiteFeedback(true);
+        } else {
+          console.log('⏭️ Feedback already shown/skipped in this session');
+        }
+      }, 30000); // 30 seconds
+    };
     
     window.addEventListener('open-website-feedback', handleOpenFeedback);
     window.addEventListener('profile-updated', handleProfileUpdated);
+    window.addEventListener('guest-logout', handleGuestLogout);
+    window.addEventListener('guest-login', handleGuestLogin);
     return () => {
       window.removeEventListener('open-website-feedback', handleOpenFeedback);
       window.removeEventListener('profile-updated', handleProfileUpdated);
+      window.removeEventListener('guest-logout', handleGuestLogout);
+      window.removeEventListener('guest-login', handleGuestLogin);
     };
   }, []);
 
