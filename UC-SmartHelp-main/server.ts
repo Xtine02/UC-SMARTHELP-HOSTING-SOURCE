@@ -27,10 +27,14 @@ const db = mysql.createPool({
   database: process.env.DB_NAME || 'uc_smarthelp',
 });
 
+const OVERDUE_TICKET_DEMO_MINUTES = 1; // demo threshold only
+const OVERDUE_TICKET_TEXT = '5 days'; // preserve user-facing wording
+const OVERDUE_CHECK_INTERVAL_MS = 1 * 60 * 1000; // every minute for demo
+
 // This is used for ticket responses tables, which may be named either `ticket_response` or `ticket_responses`.
 // It's initialized during database migration in `initializeDatabase`.
 let RESPONSE_TABLE = 'ticket_response';
-let NOTIFICATION_PK_NAME = 'id';
+let NOTIFICATION_PK_NAME = 'notification_id';
 
 interface DBColumn extends RowDataPacket {
   Field: string;
@@ -453,7 +457,7 @@ const initializeDatabase = async () => {
       // Create notifications table
       await connection.query(`
         CREATE TABLE IF NOT EXISTS notifications (
-          id INT AUTO_INCREMENT PRIMARY KEY,
+          notification_id INT AUTO_INCREMENT PRIMARY KEY,
           user_id INT NOT NULL,
           type VARCHAR(50) NOT NULL,
           title VARCHAR(255) NOT NULL,
@@ -504,8 +508,8 @@ const initializeDatabase = async () => {
 
         NOTIFICATION_PK_NAME = notificationColumns.find((c) => {
           const field = c.Field.toLowerCase();
-          return field === 'id' || field === 'notification_id';
-        })?.Field || 'id';
+          return field === 'notification_id' || field === 'id';
+        })?.Field || 'notification_id';
 
         const [notificationFks] = await connection.query<RowDataPacket[]>(
           `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
@@ -2090,10 +2094,11 @@ app.patch('/api/tickets/:id/status', async (req: Request, res: Response) => {
 
     // Create notifications for status change
     try {
+      const userPkName = await getUserPkName();
       // Get ticket owner and staff info
       const [ticketInfo] = await db.query<RowDataPacket[]>(
         `SELECT t.user_id, t.subject, u.role FROM tickets t 
-         LEFT JOIN users u ON t.user_id = u.id 
+         LEFT JOIN users u ON t.user_id = u.${userPkName} 
          WHERE t.${pkName} = ?`,
         [id]
       );
@@ -2116,7 +2121,7 @@ app.patch('/api/tickets/:id/status', async (req: Request, res: Response) => {
         // Notify the staff member who made the change (if they're staff/admin)
         if (user_id && user_id !== ticketOwnerId) {
           const [staffInfo] = await db.query<RowDataPacket[]>(
-            "SELECT role FROM users WHERE id = ?",
+            `SELECT role FROM users WHERE ${userPkName} = ?`,
             [user_id]
           );
           
@@ -2340,8 +2345,9 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
   try {
     const [ticketCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM tickets");
     const pkName = ticketCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'ticket_id')?.Field || 'id';
+    const userPkName = await getUserPkName();
 
-    // Find tickets that haven't had staff replies for 5 days
+    // Find tickets that haven't had staff replies for the demo threshold (1 minute), but keep labels at 5 days
     const [overdueTickets] = await db.query<RowDataPacket[]>(`
       SELECT t.${pkName} as id, t.user_id, t.subject, t.status, t.created_at,
              MAX(tr.created_at) as last_response_date,
@@ -2350,21 +2356,21 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
              u.role
       FROM tickets t
       LEFT JOIN ticket_response tr ON t.${pkName} = tr.ticket_id
-      LEFT JOIN users u ON t.user_id = u.id
+      LEFT JOIN users u ON t.user_id = u.${userPkName}
       WHERE t.status NOT IN ('resolved', 'closed')
       GROUP BY t.${pkName}, t.user_id, t.subject, t.status, t.created_at, u.role
       HAVING (
         last_staff_response_date IS NULL
-        AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, t.created_at, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       ) OR (
         last_staff_response_date IS NULL
         AND last_student_response_date IS NOT NULL
-        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, last_student_response_date, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       ) OR (
         last_staff_response_date IS NOT NULL
         AND last_student_response_date IS NOT NULL
         AND last_student_response_date > last_staff_response_date
-        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, last_student_response_date, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       )
     `);
 
@@ -3457,7 +3463,10 @@ app.delete('/api/notifications/:id', async (req: Request, res: Response) => {
 
   try {
     const [notificationCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM notifications");
-    const notificationPkName = notificationCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'notification_id')?.Field || NOTIFICATION_PK_NAME;
+    const notificationPkName = notificationCols.find((c) => {
+      const field = c.Field.toLowerCase();
+      return field === 'notification_id' || field === 'id';
+    })?.Field || NOTIFICATION_PK_NAME;
 
     const [result] = await db.query<ResultSetHeader>(
       `DELETE FROM notifications WHERE ${notificationPkName} = ? AND user_id = ?`,
@@ -3512,15 +3521,18 @@ void runDeactivatedAccountCleanup();
 const checkOverdueTickets = async () => {
   try {
     console.log('Checking for overdue tickets...');
+    console.log(`Using RESPONSE_TABLE: ${RESPONSE_TABLE}`);
     
     const [ticketCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM tickets");
     const ticketPkName = ticketCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'ticket_id')?.Field || 'id';
+    console.log(`Detected ticket PK: ${ticketPkName}`);
 
     // Detect users table primary key
     const [userCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM users");
     const userPkName = userCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'user_id')?.Field || 'id';
+    console.log(`Detected user PK: ${userPkName}`);
 
-    // Find tickets that haven't had staff replies for 5 days
+    // Find tickets that haven't had staff replies for the demo threshold (1 minute), but keep labels at 5 days
     const [overdueTickets] = await db.query<RowDataPacket[]>(`
       SELECT t.${ticketPkName} as id, t.user_id, t.subject, t.status, t.created_at, t.department,
              MAX(tr.created_at) as last_response_date,
@@ -3534,21 +3546,26 @@ const checkOverdueTickets = async () => {
       GROUP BY t.${ticketPkName}, t.user_id, t.subject, t.status, t.created_at, t.department, u.role
       HAVING (
         last_staff_response_date IS NULL
-        AND DATEDIFF(CURRENT_DATE, DATE(t.created_at)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, t.created_at, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       ) OR (
         last_staff_response_date IS NULL
         AND last_student_response_date IS NOT NULL
-        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, last_student_response_date, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       ) OR (
         last_staff_response_date IS NOT NULL
         AND last_student_response_date IS NOT NULL
         AND last_student_response_date > last_staff_response_date
-        AND DATEDIFF(CURRENT_DATE, DATE(last_student_response_date)) >= 5
+        AND TIMESTAMPDIFF(MINUTE, last_student_response_date, NOW()) >= ${OVERDUE_TICKET_DEMO_MINUTES}
       )
     `);
 
+    console.log(`Found ${overdueTickets.length} overdue tickets`);
+    if (overdueTickets.length > 0) {
+      console.log('Overdue tickets:', overdueTickets.map(t => ({id: t.id, subject: t.subject, status: t.status, created_at: t.created_at})));
+    }
+
     let notificationsCreated = 0;
-    let ticketsAutoClosed = 0;
+    let ticketsAutoResolved = 0;
 
     for (const ticket of overdueTickets) {
       const ticketId = ticket.id;
@@ -3560,22 +3577,29 @@ const checkOverdueTickets = async () => {
       const lastStudentResponseDate = ticket.last_student_response_date ? new Date(ticket.last_student_response_date) : null;
       const createdAt = new Date(ticket.created_at);
 
+      console.log(`Processing ticket ${ticketId}: role=${userRole}, userId=${userId}, status=${ticket.status}`);
+
       const overdueReference = lastStudentResponseDate && lastStudentResponseDate > createdAt
         ? lastStudentResponseDate
         : createdAt;
       const staffRepliedAfterReference = lastStaffResponseDate && lastStaffResponseDate > overdueReference;
 
+      console.log(`Ticket ${ticketId}: staffRepliedAfterReference=${staffRepliedAfterReference}`);
+
       if (!staffRepliedAfterReference) {
         // Check if we already notified about this ticket today to avoid spam
         const [existingNotifications] = await db.query<RowDataPacket[]>(`
-          SELECT id FROM notifications 
+          SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
           WHERE user_id = ? AND ticket_id = ? AND type IN ('ticket_overdue', 'ticket_overdue_staff') 
           AND DATE(created_at) = CURRENT_DATE
         `, [userId, ticketId]);
 
+        console.log(`Ticket ${ticketId}: existingNotifications=${existingNotifications.length}`);
+
         if (existingNotifications.length === 0) {
           // Notify students about their overdue tickets
           if (userRole === 'student') {
+            console.log(`Creating notification for student user ${userId} for ticket ${ticketId}`);
             await createNotification(
               userId,
               'ticket_overdue',
@@ -3587,6 +3611,7 @@ const checkOverdueTickets = async () => {
           } 
           // Notify staff/admin about overdue tickets they're handling
           else if (['staff', 'admin'].includes(userRole)) {
+            console.log(`Creating notification for staff user ${userId} for ticket ${ticketId}`);
             await createNotification(
               userId,
               'ticket_overdue_staff',
@@ -3595,42 +3620,27 @@ const checkOverdueTickets = async () => {
               ticketId
             );
             notificationsCreated++;
+          } else {
+            console.log(`Skipping notification: userRole="${userRole}" doesn't match student/staff/admin`);
           }
         }
 
-        const daysSinceReference = Math.floor((Date.now() - overdueReference.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysSinceReference >= 5) {
-          // Check if we already auto-closed this ticket
-          const [existingFeedback] = await db.query<RowDataPacket[]>(`
-            SELECT id FROM department_feedback 
-            WHERE ticket_id = ? AND auto_closed = TRUE
-          `, [ticketId]);
-
-          if (existingFeedback.length === 0) {
-            // Auto-close the ticket
-            await db.execute(
-              `UPDATE tickets SET status = 'Resolved', closed_at = CURRENT_TIMESTAMP WHERE ${pkName} = ?`,
-              [ticketId]
-            );
-
-            // Create feedback request for the department
-            if (department && userId) {
+        // Auto-resolve ticket after overdue threshold
+        const minutesSinceReference = Math.floor((Date.now() - overdueReference.getTime()) / (1000 * 60));
+        console.log(`Ticket ${ticketId}: minutesSinceReference=${minutesSinceReference}, threshold=${OVERDUE_TICKET_DEMO_MINUTES}`);
+        
+        if (minutesSinceReference >= OVERDUE_TICKET_DEMO_MINUTES) {
+          // Check if already resolved
+          if (ticket.status !== 'resolved' && ticket.status !== 'closed') {
+            try {
               await db.execute(
-                `INSERT INTO department_feedback (user_id, ticket_id, department, feedback_requested, auto_closed, date_requested) 
-                 VALUES (?, ?, ?, TRUE, TRUE, NOW())`,
-                [userId, ticketId, department]
+                `UPDATE tickets SET status = 'Resolved', closed_at = CURRENT_TIMESTAMP WHERE ${ticketPkName} = ?`,
+                [ticketId]
               );
-
-              // Notify the user about the auto-closure and feedback request
-              await createNotification(
-                userId,
-                'ticket_auto_closed',
-                'Ticket auto-closed',
-                `Your ticket "${subject}" has been automatically closed due to no staff reply for 5 days. Please provide feedback about the ${department} department.`,
-                ticketId
-              );
-
-              ticketsAutoClosed++;
+              ticketsAutoResolved++;
+              console.log(`Auto-resolved ticket ${ticketId} due to inactivity`);
+            } catch (error) {
+              console.error(`Error auto-resolving ticket ${ticketId}:`, error);
             }
           }
         }
@@ -3640,7 +3650,7 @@ const checkOverdueTickets = async () => {
     // Also notify admins about any overdue tickets in the system (once per day)
     if (overdueTickets.length > 0) {
       const [existingAdminNotifications] = await db.query<RowDataPacket[]>(`
-        SELECT id FROM notifications 
+        SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
         WHERE type = 'overdue_tickets_detected' 
         AND DATE(created_at) = CURRENT_DATE
         LIMIT 1
@@ -3665,18 +3675,18 @@ const checkOverdueTickets = async () => {
       }
     }
 
-    if (notificationsCreated > 0 || ticketsAutoClosed > 0) {
-      console.log(`Created ${notificationsCreated} overdue notifications and auto-closed ${ticketsAutoClosed} tickets`);
+    if (notificationsCreated > 0 || ticketsAutoResolved > 0) {
+      console.log(`Created ${notificationsCreated} overdue notifications and auto-resolved ${ticketsAutoResolved} tickets`);
     }
   } catch (error: unknown) {
     console.error('Error checking overdue tickets:', error);
   }
 };
 
-// Run overdue check every 6 hours
+// Run overdue check every minute for demo
 setInterval(() => {
   void checkOverdueTickets();
-}, 6 * 60 * 60 * 1000);
+}, OVERDUE_CHECK_INTERVAL_MS);
 
 // Also run on startup
 void checkOverdueTickets();

@@ -86,9 +86,10 @@ const Navbar = () => {
       fetchUnreadCount(userId);
       fetchNotifications(userId);
 
+      // Poll for unread count updates every 5 seconds for real-time badge
       const interval = setInterval(() => {
         fetchUnreadCount(userId as number);
-      }, 30000);
+      }, 5000);
       return () => clearInterval(interval);
     }
 

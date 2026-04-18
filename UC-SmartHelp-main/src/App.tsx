@@ -18,6 +18,7 @@ import About from "./pages/About";
 import Contact from "./pages/Contact";
 import Help from "./pages/Help";
 import TicketsPage from "./pages/TicketsPage";
+import TicketDetailPage from "./pages/TicketDetailPage";
 import ChatHistoryPage from "./pages/ChatHistoryPage";
 import DepartmentAnalytics from "./pages/DepartmentAnalytics";
 import NotFound from "./pages/NotFound";
@@ -147,6 +148,7 @@ const App = () => {
             
             {/* Tickets Page */}
             <Route path="/tickets" element={<TicketsPage />} />
+            <Route path="/tickets/:id" element={<TicketDetailPage />} />
             <Route path="/chat-history" element={<ChatHistoryPage />} />
             
             {/* Support Pages */}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { format } from "date-fns";
@@ -51,6 +52,7 @@ type SortConfig = {
 
 interface Props {
   departmentFilter?: string;
+  ticketIdFromRoute?: string;
 }
 
 // Match the normalization used in AdminDashboard for consistent filtering
@@ -92,7 +94,7 @@ const isTicketNew = (ticket: Ticket, isStaffRole: boolean) => {
     : Boolean(ticket.has_unread_staff_reply || ticket.has_unread_reply);
 };
 
-const TicketList = ({ departmentFilter }: Props) => {
+const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
   const { toast } = useToast();
   // 1. Manual Auth Logic
   let user = null;
@@ -167,6 +169,7 @@ const TicketList = ({ departmentFilter }: Props) => {
   const [feedbackTicket, setFeedbackTicket] = useState<Ticket | null>(null);
   const [showFilters, setShowFilters] = useState<boolean>(true);
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
+  const location = useLocation();
 
   const fetchTickets = async () => {
     try {
@@ -225,6 +228,21 @@ const TicketList = ({ departmentFilter }: Props) => {
       window.removeEventListener('ticket-updated', handleTicketUpdated);
     };
   }, [departmentFilter]);
+
+  // Auto-open ticket if coming from a notification with ticketId in state, or from direct route
+  useEffect(() => {
+    const ticketIdToOpen = ticketIdFromRoute || location.state?.ticketId;
+    if (ticketIdToOpen && tickets.length > 0) {
+      const ticket = tickets.find(t => t.id === ticketIdToOpen || t.id === ticketIdToOpen.toString());
+      if (ticket) {
+        setSelectedTicket(ticket);
+        // Clear the location state so it doesn't open again on navigation back
+        if (location.state?.ticketId) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    }
+  }, [ticketIdFromRoute, location.state?.ticketId, tickets]);
 
   const handleSort = (key: keyof Ticket | "department_name") => {
     let direction: "asc" | "desc" = "asc";

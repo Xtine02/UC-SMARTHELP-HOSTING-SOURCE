@@ -51,6 +51,33 @@ const NotificationsPage: React.FC = () => {
 
   const getCurrentUserId = (user: any) => user?.userId || user?.id || user?.user_id || null;
 
+  // Play notification sound
+  const playNotificationSound = () => {
+    try {
+      // Create a simple bell notification sound using Web Audio API
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const now = audioContext.currentTime;
+      
+      // Create oscillator for bell sound
+      const osc = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      osc.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      // Bell frequencies
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.3, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      
+      osc.start(now);
+      osc.stop(now + 0.3);
+    } catch (error) {
+      console.error("Error playing notification sound:", error);
+    }
+  };
+
   const fetchNotifications = async () => {
     const currentUser = getCurrentUser();
     const userId = getCurrentUserId(currentUser);
@@ -60,15 +87,25 @@ const NotificationsPage: React.FC = () => {
       const response = await fetch(`${API_URL}/api/notifications?user_id=${encodeURIComponent(userId)}`);
       if (response.ok) {
         const data = await response.json();
+        
+        // Check if there are new unread notifications
+        const previousUnreadCount = notifications.filter(n => n.is_read === 0).length;
+        const newUnreadCount = data.filter((n: Notification) => n.is_read === 0).length;
+        
+        // Play sound and show toast if new unread notifications arrived
+        if (newUnreadCount > previousUnreadCount) {
+          playNotificationSound();
+          const newCount = newUnreadCount - previousUnreadCount;
+          toast({
+            title: "New Notification",
+            description: `You have ${newCount} new notification${newCount > 1 ? 's' : ''}`,
+          });
+        }
+        
         setNotifications(data);
       }
     } catch (error) {
       console.error("Error fetching notifications:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load notifications",
-        variant: "destructive",
-      });
     } finally {
       setLoading(false);
     }
@@ -190,6 +227,11 @@ const NotificationsPage: React.FC = () => {
 
   useEffect(() => {
     fetchNotifications();
+    
+    // Poll for new notifications every 5 seconds
+    const pollInterval = setInterval(fetchNotifications, 5000);
+    
+    return () => clearInterval(pollInterval);
   }, [authUser]);
 
   const groupedNotifications = groupNotificationsByDay(notifications);
@@ -280,13 +322,9 @@ const NotificationsPage: React.FC = () => {
                             // Redirect feedback notifications to departmental analytics
                             navigate('/analytics');
                           } else if (['ticket_reply', 'student_ticket_reply', 'ticket_status_changed', 'ticket_overdue', 'ticket_overdue_staff', 'ticket_auto_closed', 'status_updated_by_you', 'new_ticket', 'overdue_tickets_detected', 'ticket_assigned'].includes(notification.type)) {
-                            // Check if user is staff/admin and redirect to their dashboard instead of tickets page
-                            const userJson = localStorage.getItem("user");
-                            const user = userJson ? JSON.parse(userJson) : null;
-                            const role = (user?.role || "").toString().toLowerCase();
-                            
-                            if (role === 'staff' || role === 'admin') {
-                              navigate(getDashboardPath());
+                            // Navigate to tickets page with ticket ID in state to auto-open the modal
+                            if (notification.ticket_id) {
+                              navigate('/tickets', { state: { ticketId: notification.ticket_id } });
                             } else {
                               navigate('/tickets');
                             }
