@@ -18,7 +18,7 @@ interface Ticket {
   id: string;
   ticket_number: string;
   subject: string;
-  status: "pending" | "in_progress" | "resolved" | "reopened";
+  status: "pending" | "in_progress" | "resolved" | "reopened" | "unattended";
   created_at: string;
   department_id: string;
   acknowledge_at?: string | null;
@@ -43,6 +43,7 @@ const statusColors: Record<string, string> = {
   in_progress: "bg-blue-400 text-foreground hover:bg-blue-500",
   resolved: "bg-green-400 text-foreground hover:bg-green-500",
   reopened: "bg-pink-400 text-foreground hover:bg-pink-500",
+  unattended: "bg-red-400 text-foreground hover:bg-red-500",
 };
 
 type SortConfig = {
@@ -445,6 +446,7 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
                 { id: "in_progress", label: "In-Progress" },
                 { id: "resolved", label: "Resolved/Closed" },
                 { id: "reopened", label: "Reopened" },
+                { id: "unattended", label: "Unattended" },
               ].map((btn) => (
                 <button
                   key={btn.id}
@@ -541,7 +543,7 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
                     <TableCell className="text-sm max-w-[500px] truncate">{t.description || "---"}</TableCell>
                     <TableCell>
                       <Badge className={`${statusColors[t.status] || "bg-gray-400"} border-none font-bold uppercase text-[10px] tracking-wider px-2.5 py-0.5`}>
-                        {t.status === "in_progress" ? "In-Progress" : t.status === "resolved" ? "Resolved" : t.status === "reopened" ? "Reopened" : "Pending"}
+                        {t.status === "in_progress" ? "In-Progress" : t.status === "resolved" ? "Resolved" : t.status === "reopened" ? "Reopened" : t.status === "unattended" ? "Unattended" : "Pending"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">

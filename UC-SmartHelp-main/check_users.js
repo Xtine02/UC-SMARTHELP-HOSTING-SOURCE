@@ -10,11 +10,11 @@ const checkUsers = async () => {
 
   try {
     const connection = await pool.getConnection();
-    const [rows] = await connection.execute('SELECT id, email, first_name, last_name, role, department FROM users');
+    const [rows] = await connection.execute('SELECT id, username, first_name, last_name, role, department FROM users');
     console.log('\n=== EXISTING USERS IN DATABASE ===\n');
     rows.forEach(user => {
       console.log(`ID: ${user.id}`);
-      console.log(`Email: ${user.email}`);
+      console.log(`Username: ${user.username}`);
       console.log(`Name: ${user.first_name} ${user.last_name}`);
       console.log(`Role: ${user.role}`);
       console.log(`Department: ${user.department}\n`);

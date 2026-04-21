@@ -18,7 +18,7 @@ interface User {
   id: number;
   first_name: string;
   last_name: string;
-  email: string;
+  username: string;
   gmail_account?: string | null;
   role: string;
   department: string | null;
@@ -126,7 +126,7 @@ const AccountManagement = () => {
 
   const handleSaveEdit = async () => {
     if (!editUser) return;
-    if (!editUser.first_name || !editUser.last_name || !editUser.email) {
+    if (!editUser.first_name || !editUser.last_name || !editUser.username) {
       toast({ variant: "destructive", title: "Error", description: "Please fill in all required fields" });
       return;
     }
@@ -139,7 +139,7 @@ const AccountManagement = () => {
         body: JSON.stringify({
           first_name: editUser.first_name,
           last_name: editUser.last_name,
-          email: editUser.email,
+          username: editUser.username,
           gmail_account: editUser.gmail_account || null,
           role: editUser.role,
           department: editUser.role === "staff" ? editUser.department : null,
@@ -481,12 +481,12 @@ const AccountManagement = () => {
                       />
                     </div>
                     <div className="sm:col-span-2 space-y-2">
-                      <label className="text-sm font-medium text-foreground">Email *</label>
+                      <label className="text-sm font-medium text-foreground">Username *</label>
                       <Input
-                        type="email"
-                        value={editUser.email}
-                        onChange={(e) => setEditUser({ ...editUser, email: e.target.value })}
-                        placeholder="user@example.com"
+                        type="text"
+                        value={editUser.username}
+                        onChange={(e) => setEditUser({ ...editUser, username: e.target.value })}
+                        placeholder="username"
                         className="rounded-lg"
                       />
                     </div>
@@ -497,39 +497,14 @@ const AccountManagement = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => handleSendResetLink(editUser.gmail_account || editUser.email)}
+                        onClick={() => handleSendResetLink(editUser.username)}
                         disabled={resetLoading}
                         className="rounded-lg bg-primary/10 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/20 disabled:opacity-50"
                       >
                         {resetLoading ? "Sending..." : "Send Reset Link"}
                       </button>
                     </div>
-                    <div className="sm:col-span-2 space-y-2">
-                      <label className="text-sm font-medium text-foreground">Linked Gmail Account</label>
-                      <Input
-                        type="email"
-                        value={editUser.gmail_account || ""}
-                        onChange={(e) => setEditUser({ ...editUser, gmail_account: e.target.value })}
-                        placeholder="your.email@gmail.com"
-                        className="rounded-lg"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Used for password recovery when user cannot access their account email.
-                      </p>
-                    </div>
-                    {editUser.role === "staff" && (
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-foreground">Department</label>
-                        <Select value={editUser.department || ""} onValueChange={(v) => setEditUser({ ...editUser, department: v })}>
-                          <SelectTrigger className="rounded-lg"><SelectValue placeholder="Select Department" /></SelectTrigger>
-                          <SelectContent>
-                            {departments.map((dept) => (
-                              <SelectItem key={dept} value={dept}>{dept}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
+
                   </div>
                   <div className="flex gap-2 justify-end pt-4">
                     <button

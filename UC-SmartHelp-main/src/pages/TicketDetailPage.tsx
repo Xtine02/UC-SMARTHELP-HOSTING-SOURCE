@@ -7,7 +7,7 @@ interface User {
   id?: string | number;
   userId?: string | number;
   user_id?: string | number;
-  email?: string;
+  username?: string;
   role?: string;
 }
 

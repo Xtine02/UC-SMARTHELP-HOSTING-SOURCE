@@ -45,11 +45,11 @@ const ForgotPassword = () => {
     const trimmedIdentifier = identifier.trim();
 
     if (!trimmedIdentifier) {
-      toast({ variant: "destructive", title: "Error", description: "Please enter your email." });
+      toast({ variant: "destructive", title: "Error", description: "Please enter your username." });
       return;
     }
     if (!trimmedIdentifier.includes("@")) {
-      toast({ variant: "destructive", title: "Invalid Email", description: "Please enter a valid email address." });
+      toast({ variant: "destructive", title: "Invalid Username", description: "Please enter a valid username." });
       return;
     }
 
@@ -83,7 +83,7 @@ const ForgotPassword = () => {
         setProfile(null);
         setUserId(null);
         setShowManualEmail(true);
-        toast({ variant: "destructive", title: "Lookup failed", description: data.error || "No account found for this email." });
+        toast({ variant: "destructive", title: "Lookup failed", description: data.error || "No account found for this username." });
       } else {
         hasMatchedAccounts = true;
         const first = matchedAccounts[0];
@@ -144,7 +144,7 @@ const ForgotPassword = () => {
     setResetLoading(true);
     try {
       console.log("📤 Sending reset email via backend to:", trimmedEmail);
-      const payload: Record<string, any> = { email: trimmedEmail };
+      const payload: Record<string, any> = { username: trimmedEmail };
       if (selectedMethod === "gmail" && userId != null) {
         payload.user_id = userId;
       }
@@ -187,10 +187,10 @@ const ForgotPassword = () => {
           {step === 1 ? (
             <form onSubmit={handleLookupGmail} className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-primary-foreground">Email</Label>
+                <Label className="text-primary-foreground">Username</Label>
                 <Input
                   type="text"
-                  placeholder="Enter your account email"
+                  placeholder="Enter your username"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   required

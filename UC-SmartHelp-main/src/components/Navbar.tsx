@@ -16,8 +16,8 @@ interface User {
   id?: number;
   user_id?: number;
   userId?: number;
+  username?: string;
   role?: string;
-  email?: string;
   first_name?: string;
   firstName?: string;
   fullName?: string;
@@ -292,7 +292,7 @@ const Navbar = () => {
       <div className="container flex h-16 items-center justify-between px-4 sm:px-8">
         <div className="flex items-center gap-4">
           <Link to="/?noRedirect=1" className="flex items-center gap-2 animate-in fade-in duration-300">
-            <img src={logo} alt="UC SmartHelp" className="h-10 w-auto" />
+            <img src={logo} alt="UC SmartHelp" className="h-16 w-auto" />
           </Link>
         </div>
 

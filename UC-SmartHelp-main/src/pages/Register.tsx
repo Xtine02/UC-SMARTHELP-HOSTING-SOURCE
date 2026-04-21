@@ -10,8 +10,9 @@ import Navbar from "@/components/Navbar";
 const Register = () => {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -44,32 +45,27 @@ const Register = () => {
       return;
     }
 
+    // Validate email
+    if (!email.trim() || !email.includes('@')) {
+      toast({ 
+        variant: "destructive", 
+        title: "Invalid Email", 
+        description: "Please enter a valid email address." 
+      });
+      return;
+    }
+
     setLoading(true);
 
     const userData = {
       firstName,
       lastName,
-      email: email.toLowerCase().trim(),
+      username: username.toLowerCase().trim(),
       password,
+      gmailAccount: email.toLowerCase().trim(),
     };
 
     try {
-      // Frontend pre-check guard for existing accounts
-      const lookupResponse = await fetch(`${API_URL}/api/find-linked-gmail`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier: userData.email }),
-      });
-      if (lookupResponse.ok) {
-        toast({
-          variant: "destructive",
-          title: "Registration Error",
-          description: "Email is already taken",
-        });
-        setLoading(false);
-        return;
-      }
-
       const response = await fetch(`${API_URL}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -135,8 +131,8 @@ const Register = () => {
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-white text-sm ml-1">Email:</Label>
-              <Input type="email" placeholder="example@uc.edu.ph" value={email} onChange={(e) => setEmail(e.target.value)} required className="bg-white/95 border-0 h-11" />
+              <Label className="text-white text-sm ml-1">Username:</Label>
+              <Input type="text" placeholder="yourusername" value={username} onChange={(e) => setUsername(e.target.value)} required className="bg-white/95 border-0 h-11" />
             </div>
             <div className="space-y-2">
               <Label className="text-white text-sm ml-1">Password:</Label>
@@ -192,7 +188,19 @@ const Register = () => {
               </div>
             </div>
 
-            <Button type="submit" disabled={loading || !isPasswordValid || !firstName || !lastName || !email} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xl py-7 mt-2 rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+            <div className="space-y-1">
+              <Label className="text-white text-sm ml-1">Email:</Label>
+              <Input 
+                type="email" 
+                placeholder="your.email@example.com" 
+                value={email} 
+                onChange={(e) => setEmail(e.target.value)} 
+                required
+                className="bg-white/95 border-0 h-11" 
+              />
+            </div>
+
+            <Button type="submit" disabled={loading || !isPasswordValid || !firstName || !lastName || !username || !email} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xl py-7 mt-2 rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
               {loading ? "SYNCING..." : "SIGN UP"}
             </Button>
           </form>

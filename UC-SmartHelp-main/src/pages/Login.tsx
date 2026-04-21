@@ -11,7 +11,7 @@ import { signInWithPopup } from "firebase/auth";
 import { normalizeDepartment } from "@/lib/utils";
 
 const Login = () => {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -137,7 +137,7 @@ const Login = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          email: email.toLowerCase().trim(), 
+          username: username.toLowerCase().trim(), 
           password 
         }),
       });
@@ -215,12 +215,12 @@ const Login = () => {
 
           <form onSubmit={handleLogin} className="space-y-5">
             <div className="space-y-1">
-              <Label className="text-white text-sm ml-1">Email:</Label>
+              <Label className="text-white text-sm ml-1">Username:</Label>
               <Input 
-                type="email" 
-                placeholder="Enter your email"
-                value={email} 
-                onChange={(e) => setEmail(e.target.value)} 
+                type="text" 
+                placeholder="Enter your username"
+                value={username} 
+                onChange={(e) => setUsername(e.target.value)} 
                 required 
                 className="bg-white/95 border-0 h-12" 
                 disabled={loading}

@@ -5,6 +5,13 @@ import Navbar from "@/components/Navbar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -20,6 +27,14 @@ interface ChatHistoryMessage {
   message?: string | null;
   role?: string | null;
   created_at?: string | null;
+  user_name?: string | null;
+}
+
+interface User {
+  id: string | number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
 }
 
 const ChatHistoryPage = () => {
@@ -29,6 +44,7 @@ const ChatHistoryPage = () => {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(new Set());
   const [expandedDayKeys, setExpandedDayKeys] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
 
   const userRaw = localStorage.getItem("user");
 
@@ -40,6 +56,8 @@ const ChatHistoryPage = () => {
   }
 
   const userId = user?.id || user?.userId || user?.user_id || null;
+  const userRole = (user?.role || "").toString().toLowerCase();
+  const isAdmin = userRole === "admin";
   const isGuest = localStorage.getItem("uc_guest") === "1";
 
   useEffect(() => {
@@ -53,6 +71,30 @@ const ChatHistoryPage = () => {
     return () => window.removeEventListener("popstate", onPopState);
   }, [isGuest, navigate]);
 
+  // Fetch all users for admin
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const fetchAllUsers = async () => {
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+        const response = await fetch(`${API_URL}/api/users`);
+        if (!response.ok) throw new Error("Failed to fetch users");
+        const data = (await response.json()) as User[];
+        setAllUsers(Array.isArray(data) ? data : []);
+        // Set default to first user if available
+        if (data.length > 0 && !selectedUserId) {
+          setSelectedUserId(String(data[0].id));
+        }
+      } catch (error) {
+        console.error("Failed to fetch users:", error);
+        setAllUsers([]);
+      }
+    };
+
+    fetchAllUsers();
+  }, [isAdmin, selectedUserId]);
+
   useEffect(() => {
     if (!userId && !isGuest) {
       navigate("/login");
@@ -61,14 +103,17 @@ const ChatHistoryPage = () => {
 
     const fetchHistory = async () => {
       try {
-        if (!userId) {
+        // Determine which user ID to fetch history for
+        const targetUserId = isAdmin && selectedUserId ? selectedUserId : userId;
+
+        if (!targetUserId) {
           setMessages([]);
           return;
         }
 
         const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
         const historyUrl = new URL(`${API_URL}/api/chat-history`);
-        historyUrl.searchParams.set("user_id", String(userId));
+        historyUrl.searchParams.set("user_id", String(targetUserId));
         historyUrl.searchParams.set("limit", "500");
 
         const response = await fetch(historyUrl.toString());
@@ -84,7 +129,7 @@ const ChatHistoryPage = () => {
     };
 
     fetchHistory();
-  }, [navigate, userId, isGuest]);
+  }, [navigate, userId, isGuest, isAdmin, selectedUserId]);
 
   const sortedMessages = useMemo(
     () =>
@@ -189,9 +234,36 @@ const ChatHistoryPage = () => {
       <Navbar />
       <main className="flex-1 container mx-auto p-4 md:p-8 animate-in fade-in duration-500">
         <div className="rounded-2xl border bg-card shadow-xl overflow-hidden p-4 min-h-[720px]">
-          <div className="mb-6">
-            <h1 className="text-3xl font-bold text-foreground">Chat History</h1>
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-foreground">
+                {isAdmin ? "All Accounts Chat History" : "Chat History"}
+              </h1>
+              {isAdmin && (
+                <p className="text-sm text-muted-foreground mt-2">View chat history for all user accounts</p>
+              )}
+            </div>
           </div>
+
+          {isAdmin && allUsers.length > 0 && (
+            <div className="mb-6 flex items-center gap-4 p-4 bg-muted/30 rounded-xl border">
+              <label className="text-sm font-medium text-foreground">Select User:</label>
+              <Select value={selectedUserId || ""} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="w-full md:w-80">
+                  <SelectValue placeholder="Select a user..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {allUsers.map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {u.first_name && u.last_name
+                        ? `${u.first_name} ${u.last_name} (${u.username || "No username"})`
+                        : u.username || `User ${u.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2 ml-auto">

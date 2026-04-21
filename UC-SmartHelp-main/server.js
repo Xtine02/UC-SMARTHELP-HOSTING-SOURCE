@@ -56,22 +56,22 @@ initializeDatabase().catch(() => {});
 
 // Authentication routes
 app.post('/api/register', async (req, res) => {
-  const { firstName, lastName, email, password } = req.body;
+  const { firstName, lastName, username, password } = req.body;
   
-  if (!firstName || !lastName || !email || !password) {
+  if (!firstName || !lastName || !username || !password) {
     return res.status(400).json({ error: "All fields are required" });
   }
 
   try {
-    const [existing] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    const [existing] = await db.query('SELECT id FROM users WHERE username = ?', [username]);
     if (existing.length > 0) {
-      return res.status(400).json({ error: "Email already registered" });
+      return res.status(400).json({ error: "Username already registered" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const [result] = await db.query(
-      'INSERT INTO users (first_name, last_name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-      [firstName, lastName, email, hashedPassword, 'student']
+      'INSERT INTO users (first_name, last_name, username, password, role) VALUES (?, ?, ?, ?, ?)',
+      [firstName, lastName, username, hashedPassword, 'student']
     );
 
     res.status(201).json({
@@ -79,7 +79,7 @@ app.post('/api/register', async (req, res) => {
       userId: result.insertId,
       firstName,
       lastName,
-      email,
+      username,
       role: 'student',
       fullName: `${firstName} ${lastName}`
     });
@@ -89,9 +89,9 @@ app.post('/api/register', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { username, password } = req.body;
   try {
-    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
     const user = rows[0];
     if (user && Number(user.is_disabled) === 1) {
       return res.status(403).json({ error: "Account disabled" });
@@ -104,7 +104,7 @@ app.post('/api/login', async (req, res) => {
         fullName: `${user.first_name} ${user.last_name}`,
         firstName: user.first_name,
         lastName: user.last_name,
-        email: user.email
+        username: user.username
       });
     } else {
       res.status(401).json({ error: "Invalid credentials" });
@@ -117,15 +117,15 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/google-auth', async (req, res) => {
   const { email, firstName, lastName, profileImage } = req.body;
   try {
-    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [email]);
     let user = rows[0];
 
     if (!user) {
       const [result] = await db.query(
-        'INSERT INTO users (first_name, last_name, email, role, image) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO users (first_name, last_name, username, role, image) VALUES (?, ?, ?, ?, ?)',
         [firstName, lastName, email, 'student', profileImage || null]
       );
-      user = { id: result.insertId, first_name: firstName, last_name: lastName, email, role: 'student', image: profileImage || null };
+      user = { id: result.insertId, first_name: firstName, last_name: lastName, username: email, role: 'student', image: profileImage || null };
     } else if ((!user.image || String(user.image).trim() === '') && typeof profileImage === 'string' && profileImage.trim() !== '') {
       await db.query('UPDATE users SET image = ? WHERE id = ?', [profileImage, user.id]);
       user.image = profileImage;
@@ -138,7 +138,7 @@ app.post('/api/google-auth', async (req, res) => {
       fullName: `${user.first_name} ${user.last_name}`, 
       firstName: user.first_name, 
       lastName: user.last_name, 
-      email: user.email,
+      username: user.username,
       image: user.image || null,
       profileImage: user.image || null
     });

@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-type TicketStatus = "pending" | "in_progress" | "resolved" | "reopened";
+type TicketStatus = "pending" | "in_progress" | "resolved" | "reopened" | "unattended";
 
 const normalizeStatus = (status: string | null | undefined): TicketStatus =>
   (status
@@ -65,6 +65,7 @@ interface Stats {
   in_progress: number;
   resolved: number;
   reopened: number;
+  unattended: number;
 }
 
 const AccountingDashboard = () => {
@@ -116,8 +117,9 @@ const AccountingDashboard = () => {
           else if (t.status === "reopened") acc.reopened++;
           else if (t.status === "in_progress") acc.in_progress++;
           else if (t.status === "resolved") acc.resolved++;
+          else if (t.status === "unattended") acc.unattended++;
           return acc;
-        }, { all: accountingTickets.length, pending: 0, in_progress: 0, resolved: 0, reopened: 0 });
+        }, { all: accountingTickets.length, pending: 0, in_progress: 0, resolved: 0, reopened: 0, unattended: 0 });
         
         setStats(newStats);
       }
@@ -167,12 +169,14 @@ const AccountingDashboard = () => {
           else if (oldStatus === "reopened") updated.reopened--;
           else if (oldStatus === "in_progress") updated.in_progress--;
           else if (oldStatus === "resolved") updated.resolved--;
+          else if (oldStatus === "unattended") updated.unattended--;
           
           // Increment new status count
           if (newStatus === "pending") updated.pending++;
           else if (newStatus === "reopened") updated.reopened++;
           else if (newStatus === "in_progress") updated.in_progress++;
           else if (newStatus === "resolved") updated.resolved++;
+          else if (newStatus === "unattended") updated.unattended++;
           
           return updated;
         });
@@ -365,12 +369,20 @@ const AccountingDashboard = () => {
             <div>
               <h1 className="text-3xl font-black tracking-tight text-emerald-700 uppercase italic">Accounting Dashboard</h1>
             </div>
-            <button 
-              onClick={() => navigate("/analytics")}
-              className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black shadow-lg hover:scale-105 active:scale-95 transition-all uppercase tracking-tight"
-            >
-              View Reviews
-            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => navigate("/chat-history")}
+                className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black shadow-lg hover:scale-105 active:scale-95 transition-all uppercase tracking-tight"
+              >
+                Chat History
+              </button>
+              <button 
+                onClick={() => navigate("/analytics")}
+                className="bg-emerald-600 text-white px-8 py-3 rounded-2xl font-black shadow-lg hover:scale-105 active:scale-95 transition-all uppercase tracking-tight"
+              >
+                View Reviews
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-6 sm:grid-cols-5">

@@ -53,7 +53,7 @@ interface User extends RowDataPacket {
   firstName?: string;
   last_name?: string;
   lastName?: string;
-  email: string;
+  username: string;
   password?: string;
   is_disabled?: number | boolean;
   deactivated_at?: string | Date | null;
@@ -200,7 +200,7 @@ const initializeDatabase = async () => {
     await connection.query(`
       CREATE TABLE IF NOT EXISTS login_attempts (
         login_attempt_id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(255) NOT NULL UNIQUE,
+        username VARCHAR(255) NOT NULL UNIQUE,
         failed_count INT NOT NULL DEFAULT 0,
         locked_until DATETIME NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -566,7 +566,7 @@ const formatUserResponse = (user: User) => {
     firstName: user.first_name || user.firstName,
     lastName: user.last_name || user.lastName,
     fullName: `${user.first_name || user.firstName} ${user.last_name || user.lastName}`,
-    email: user.email,
+    username: user.username,
     gmail_account: (user as any).gmail_account || null,
     image: (user as any).image || null,
     profileImage: (user as any).image || null,
@@ -628,23 +628,22 @@ const getChatHistoryColumns = async (): Promise<string[] | null> => {
 };
 
 app.post('/api/register', async (req: Request, res: Response) => {
-  const { firstName, lastName, email, password } = req.body;
-  if (!firstName || !lastName || !email || !password) {
+  const { firstName, lastName, username, password, gmailAccount } = req.body;
+  if (!firstName || !lastName || !username || !password) {
     return res.status(400).json({ error: "All fields are required" });
   }
   try {
-    const normalizedEmail = String(email).toLowerCase().trim();
+    const normalizedUsername = String(username).toLowerCase().trim();
     const hashedPassword = await bcrypt.hash(password, 10);
     const [existing] = await db.query<RowDataPacket[]>(
       `SELECT 1
        FROM users
-       WHERE LOWER(TRIM(email)) = ?
-          OR LOWER(TRIM(COALESCE(gmail_account, ''))) = ?
+       WHERE LOWER(TRIM(username)) = ?
        LIMIT 1`,
-      [normalizedEmail, normalizedEmail]
+      [normalizedUsername]
     );
     if (existing.length > 0) {
-      return res.status(409).json({ error: "Email is already taken" });
+      return res.status(409).json({ error: "Username is already taken" });
     }
 
     // Check if this is the first user
@@ -652,12 +651,12 @@ app.post('/api/register', async (req: Request, res: Response) => {
     const role = (userCount[0] as { count: number }).count === 0 ? 'admin' : 'student';
       
     await db.query<ResultSetHeader>(
-      'INSERT INTO users (first_name, last_name, email, password, role) VALUES (?, ?, ?, ?, ?)',
-      [firstName, lastName, normalizedEmail, hashedPassword, role]
+      'INSERT INTO users (first_name, last_name, username, password, role, gmail_account) VALUES (?, ?, ?, ?, ?, ?)',
+      [firstName, lastName, normalizedUsername, hashedPassword, role, gmailAccount || null]
     );
     const [inserted] = await db.query<RowDataPacket[]>(
-      'SELECT * FROM users WHERE email = ?',
-      [normalizedEmail]
+      'SELECT * FROM users WHERE username = ?',
+      [normalizedUsername]
     );
     const user = inserted[0];
   
@@ -668,16 +667,16 @@ app.post('/api/register', async (req: Request, res: Response) => {
 });
 
 app.post('/api/login', async (req: Request, res: Response) => {
-const { email, password } = req.body;
+const { username, password } = req.body;
 try {
-  const normalizedEmail = String(email || "").toLowerCase().trim();
-  if (!normalizedEmail || !password) {
-    return res.status(400).json({ error: "Email and password are required" });
+  const normalizedUsername = String(username || "").toLowerCase().trim();
+  if (!normalizedUsername || !password) {
+    return res.status(400).json({ error: "Username and password are required" });
   }
 
   const [lockRows] = await db.query<RowDataPacket[]>(
-    'SELECT failed_count, locked_until FROM login_attempts WHERE email = ? LIMIT 1',
-    [normalizedEmail]
+    'SELECT failed_count, locked_until FROM login_attempts WHERE username = ? LIMIT 1',
+    [normalizedUsername]
   );
   const lockRow = lockRows[0];
   const now = Date.now();
@@ -686,20 +685,20 @@ try {
     return res.status(429).json({ error: "too many attempts try again after 2 minutes" });
   }
 
-  const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE LOWER(TRIM(email)) = ? LIMIT 1', [normalizedEmail]);
+  const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE LOWER(TRIM(username)) = ? LIMIT 1', [normalizedUsername]);
   const user = rows[0];
-  console.log('Login attempt for user:', user.email, 'password starts with:', user.password ? user.password.substring(0, 10) : 'no password');
+  console.log('Login attempt for user:', user.username, 'password starts with:', user.password ? user.password.substring(0, 10) : 'no password');
   
   if (!user) {
     const nextFailed = Number(lockRow?.failed_count || 0) + 1;
     const shouldLock = nextFailed >= 3;
     await db.query(
-      `INSERT INTO login_attempts (email, failed_count, locked_until)
+      `INSERT INTO login_attempts (username, failed_count, locked_until)
        VALUES (?, ?, ${shouldLock ? "DATE_ADD(NOW(), INTERVAL 2 MINUTE)" : "NULL"})
        ON DUPLICATE KEY UPDATE
          failed_count = VALUES(failed_count),
          locked_until = VALUES(locked_until)`,
-      [normalizedEmail, shouldLock ? 0 : nextFailed]
+      [normalizedUsername, shouldLock ? 0 : nextFailed]
     );
     if (shouldLock) {
       return res.status(429).json({ error: "too many attempts try again after 2 minutes" });
@@ -708,7 +707,7 @@ try {
   }
 
   if (Number(user.is_disabled) === 1) {
-    console.log('Account disabled for user:', user.email);
+    console.log('Account disabled for user:', user.username);
     return res.status(403).json({ error: "Account disabled" });
   }
 
@@ -717,9 +716,9 @@ try {
   if (user.password && user.password.startsWith('$2')) {
     try {
       isMatch = await bcrypt.compare(password, user.password);
-      console.log('Bcrypt compare result for user', user.email, ':', isMatch);
+      console.log('Bcrypt compare result for user', user.username, ':', isMatch);
     } catch (e: unknown) {
-      console.log('Bcrypt compare failed for user', user.email, ':', e);
+      console.log('Bcrypt compare failed for user', user.username, ':', e);
       // Fallback to plain text comparison handled below
     }
   }
@@ -727,13 +726,13 @@ try {
   // Fallback to plain text comparison
   if (!isMatch) {
     isMatch = (password === user.password);
-    if (isMatch) console.log('Plain text match for user', user.email);
+    if (isMatch) console.log('Plain text match for user', user.username);
   }
 
   if (isMatch) {
     await db.query(
-      'DELETE FROM login_attempts WHERE email = ?',
-      [normalizedEmail]
+      'DELETE FROM login_attempts WHERE username = ?',
+      [normalizedUsername]
     );
     // Log successful login - handle both 'id' and 'user_id' column names
     const userId = user.id ?? user.user_id;
@@ -744,7 +743,7 @@ try {
     const nextFailed = Number(lockRow?.failed_count || 0) + 1;
     const shouldLock = nextFailed >= 3;
     await db.query(
-      `INSERT INTO login_attempts (email, failed_count, locked_until)
+      `INSERT INTO login_attempts (username, failed_count, locked_until)
        VALUES (?, ?, ${shouldLock ? "DATE_ADD(NOW(), INTERVAL 2 MINUTE)" : "NULL"})
        ON DUPLICATE KEY UPDATE
          failed_count = VALUES(failed_count),
@@ -855,6 +854,61 @@ app.post('/api/chat-history', async (req: Request, res: Response) => {
   } catch (error: unknown) {
     console.error("Error saving chat history:", error);
     res.status(500).json({ error: "Failed to save chat history" });
+  }
+});
+
+app.get('/api/chat-history/all', async (req: Request, res: Response) => {
+  try {
+    const columns = await getChatHistoryColumns();
+    if (!columns) {
+      return res.status(500).json({ error: "chat_history table not found" });
+    }
+
+    const idColumn = pickChatHistoryColumn(columns, ["id", "chat_id", "history_id"]);
+    const messageColumn = pickChatHistoryColumn(columns, ["message", "content", "chat_message", "text"]);
+    const userIdColumn = pickChatHistoryColumn(columns, ["user_id", "account_id", "sender_id", "userid"]);
+    const roleColumn = pickChatHistoryColumn(columns, ["sender_type", "role", "sender_role", "sender", "actor", "source"]);
+    const createdAtColumn = pickChatHistoryColumn(columns, ["created_at", "date_submitted", "timestamp", "createdon", "time"]);
+
+    if (!messageColumn) {
+      return res.status(500).json({ error: "chat_history has no message/content column" });
+    }
+
+    if (!userIdColumn) {
+      return res.status(500).json({ error: "chat_history has no user_id column" });
+    }
+
+    const { limit = "500" } = req.query;
+    const parsedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
+
+    const selectParts = [
+      idColumn ? `ch.${idColumn} AS id` : "NULL AS id",
+      `ch.${messageColumn} AS message`,
+      userIdColumn ? `ch.${userIdColumn} AS user_id` : "NULL AS user_id",
+      roleColumn ? `ch.${roleColumn} AS role` : "'assistant' AS role",
+      createdAtColumn ? `ch.${createdAtColumn} AS created_at` : "NOW() AS created_at",
+      "COALESCE(u.first_name, '') AS first_name",
+      "COALESCE(u.last_name, '') AS last_name",
+      "COALESCE(u.username, '') AS username",
+      "COALESCE(u.user_name, '') AS user_name"
+    ];
+
+    const orderColumn = createdAtColumn || idColumn || messageColumn;
+    const sql = `
+      SELECT ${selectParts.join(", ")}
+      FROM chat_history ch
+      LEFT JOIN users u ON ch.${userIdColumn} = u.id
+      ORDER BY ch.${orderColumn} DESC
+      LIMIT ${parsedLimit}
+    `;
+
+    console.log("Executing query:", sql);
+    const [rows] = await db.query<RowDataPacket[]>(sql);
+    console.log("Query returned", rows.length, "rows");
+    res.json(rows);
+  } catch (error: unknown) {
+    console.error("Error fetching all chat history:", error);
+    res.status(500).json({ error: "Failed to fetch chat history" });
   }
 });
 
@@ -1261,14 +1315,14 @@ try {
 app.post('/api/google-auth', async (req: Request, res: Response) => {
 const { email, firstName, lastName, profileImage } = req.body;
 try {
-  const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
+  const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE username = ?', [email]);
   let user = rows[0];
   if (!user) {
     await db.query<ResultSetHeader>(
-      'INSERT INTO users (first_name, last_name, email, role, image, gmail_account) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO users (first_name, last_name, username, role, image, gmail_account) VALUES (?, ?, ?, ?, ?, ?)',
       [firstName, lastName, email, 'student', profileImage || null, email]
     );
-    const [inserted] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
+    const [inserted] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE username = ?', [email]);
     user = inserted[0];
   } else if ((!user.image || String(user.image).trim() === '') && typeof profileImage === 'string' && profileImage.trim() !== '') {
     const pkName = await detectUserPk(user.id ?? user.user_id);
@@ -1518,22 +1572,22 @@ app.post('/api/verify-gmail-owner', async (req: Request, res: Response) => {
 });
 
 app.post('/api/request-password-reset', async (req: Request, res: Response) => {
-  const { email, user_id } = req.body;
+  const { username: email, user_id } = req.body;
   if (!email || typeof email !== 'string') {
-    return res.status(400).json({ error: 'Email is required' });
+    return res.status(400).json({ error: 'Username is required' });
   }
 
   const normalizedEmail = email.toLowerCase().trim();
   if (!normalizedEmail.includes('@')) {
-    return res.status(400).json({ error: 'Please provide a valid email address.' });
+    return res.status(400).json({ error: 'Please provide a valid username.' });
   }
 
   try {
     const pkName = await getUserPkName();
-    const queryWhere = `LOWER(TRIM(email)) = ? OR LOWER(TRIM(COALESCE(gmail_account, ''))) = ?`;
+    const queryWhere = `LOWER(TRIM(username)) = ? OR LOWER(TRIM(COALESCE(gmail_account, ''))) = ?`;
     const params: any[] = [normalizedEmail, normalizedEmail];
 
-    let query = `SELECT ${pkName} AS user_id, email, first_name
+    let query = `SELECT ${pkName} AS user_id, username, first_name
        FROM users
        WHERE (${queryWhere})`;
 
@@ -1550,7 +1604,7 @@ app.post('/api/request-password-reset', async (req: Request, res: Response) => {
     const [rows] = await db.query<RowDataPacket[]>(query, params);
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: 'email is not exists' });
+      return res.status(404).json({ error: 'Account not found for this username.' });
     }
 
     const user = rows[0];
@@ -2057,7 +2111,8 @@ app.patch('/api/tickets/:id/status', async (req: Request, res: Response) => {
       'in_progress': 'In-Progress',
       'resolved': 'Resolved',
       'closed': 'Closed',
-      'reopened': 'Reopened'
+      'reopened': 'Reopened',
+      'unattended': 'Unattended'
     };
     
     const dbStatus = statusMap[status.toLowerCase()] || status;
@@ -2621,7 +2676,7 @@ try {
       \`${idColumn}\` AS id,
       first_name,
       last_name,
-      email,
+      username,
       role
     `];
 
@@ -2690,28 +2745,28 @@ try {
 });
 
 app.post('/api/users', async (req: Request, res: Response) => {
-  const { first_name, last_name, email, password, role, department } = req.body;
-  console.log('POST /api/users - Creating user:', { first_name, last_name, email, role, department });
+  const { first_name, last_name, username, password, role, department } = req.body;
+  console.log('POST /api/users - Creating user:', { first_name, last_name, username, role, department });
   
-  if (!first_name || !last_name || !email || !password || !role) {
-    console.error('Missing required fields:', { first_name, last_name, email, password, role });
+  if (!first_name || !last_name || !username || !password || !role) {
+    console.error('Missing required fields:', { first_name, last_name, username, password, role });
     return res.status(400).json({ error: "All required fields must be provided" });
   }
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    const [existing] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email]);
+    const [existing] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE username = ?', [username]);
     if (existing.length > 0) {
-      console.error('User with email already exists:', email);
-      return res.status(400).json({ error: "User with this email already exists" });
+      console.error('User with username already exists:', username);
+      return res.status(400).json({ error: "User with this username already exists" });
     }
-    const [result] = await db.query<ResultSetHeader>('INSERT INTO users (first_name, last_name, email, password, role, department) VALUES (?, ?, ?, ?, ?, ?)', 
-      [first_name, last_name, email, hashedPassword, role, department || null]);
+    const [result] = await db.query<ResultSetHeader>('INSERT INTO users (first_name, last_name, username, password, role, department) VALUES (?, ?, ?, ?, ?, ?)', 
+      [first_name, last_name, username, hashedPassword, role, department || null]);
     
     console.log('User inserted successfully with ID:', result.insertId);
     
     const pk = await getUserPkName();
 
-    const [inserted] = await db.query<RowDataPacket[]>(`SELECT ${pk} AS id, first_name, last_name, email, role, department FROM users WHERE ${pk} = ?`, [result.insertId]);
+    const [inserted] = await db.query<RowDataPacket[]>(`SELECT ${pk} AS id, first_name, last_name, username, role, department FROM users WHERE ${pk} = ?`, [result.insertId]);
     
     if (!inserted || inserted.length === 0) {
       console.error('Failed to retrieve created user with ID:', result.insertId);
@@ -2728,7 +2783,7 @@ app.post('/api/users', async (req: Request, res: Response) => {
 
 app.patch('/api/users/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
-  const { first_name, last_name, email, role, department, is_disabled, deactivated_at, gmail_account } = req.body;
+  const { first_name, last_name, username, role, department, is_disabled, deactivated_at, gmail_account } = req.body;
 
   try {
     if (!id) {
@@ -2753,17 +2808,17 @@ app.patch('/api/users/:id', async (req: Request, res: Response) => {
       updateFields.push("last_name = ?");
       values.push(last_name);
     }
-    if (typeof email !== "undefined") {
-      const normalizedEmail = String(email).toLowerCase().trim();
-      const [existingEmail] = await db.query<RowDataPacket[]>(
-        `SELECT ${pkName} as id FROM users WHERE LOWER(TRIM(email)) = ? AND ${pkName} <> ? LIMIT 1`,
-        [normalizedEmail, id]
+    if (typeof username !== "undefined") {
+      const normalizedUsername = String(username).toLowerCase().trim();
+      const [existingUsername] = await db.query<RowDataPacket[]>(
+        `SELECT ${pkName} as id FROM users WHERE LOWER(TRIM(username)) = ? AND ${pkName} <> ? LIMIT 1`,
+        [normalizedUsername, id]
       );
-      if (existingEmail.length > 0) {
-        return res.status(409).json({ error: "Email is already taken" });
+      if (existingUsername.length > 0) {
+        return res.status(409).json({ error: "Username is already taken" });
       }
-      updateFields.push("email = ?");
-      values.push(normalizedEmail);
+      updateFields.push("username = ?");
+      values.push(normalizedUsername);
     }
     if (typeof gmail_account !== "undefined" && hasGmailAccount) {
       const normalizedGmail = String(gmail_account || "").trim().toLowerCase();
@@ -3687,17 +3742,17 @@ const checkOverdueTickets = async () => {
 
         // Auto-resolve ticket after overdue threshold
         if (minutesSinceReference >= OVERDUE_TICKET_DEMO_MINUTES) {
-          // Check if already resolved
-          if (ticket.status !== 'resolved' && ticket.status !== 'closed') {
+          // Check if already resolved or unattended
+          if (ticket.status !== 'resolved' && ticket.status !== 'closed' && ticket.status !== 'unattended') {
             try {
               await db.execute(
-                `UPDATE tickets SET status = 'Resolved', closed_at = CURRENT_TIMESTAMP WHERE ${ticketPkName} = ?`,
+                `UPDATE tickets SET status = 'Unattended', closed_at = CURRENT_TIMESTAMP WHERE ${ticketPkName} = ?`,
                 [ticketId]
               );
               ticketsAutoResolved++;
-              console.log(`Auto-resolved ticket ${ticketId} due to inactivity`);
+              console.log(`Auto-marked ticket ${ticketId} as Unattended due to inactivity`);
             } catch (error) {
-              console.error(`Error auto-resolving ticket ${ticketId}:`, error);
+              console.error(`Error auto-marking ticket ${ticketId} as unattended:`, error);
             }
           }
         }

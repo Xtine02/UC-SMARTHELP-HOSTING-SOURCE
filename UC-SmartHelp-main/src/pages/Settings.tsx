@@ -43,13 +43,8 @@ const Settings = () => {
   const [showNewPass, setShowNewPass] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
 
-  // Gmail Linking States
-  const [linkedGmail, setLinkedGmail] = useState<string | null>(null);
-  const [gmailLinking, setGmailLinking] = useState(false);
-  const [gmailModalOpen, setGmailModalOpen] = useState(false);
-  const [gmailInput, setGmailInput] = useState("");
-  const [isDeactivated, setIsDeactivated] = useState(false);
-  const [deactivateLoading, setDeactivateLoading] = useState(false);
+
+  // Deactivate account state removed
 
   const location = useLocation();
 
@@ -69,8 +64,8 @@ const Settings = () => {
         setFirstName(parsedUser.firstName || parsedUser.first_name || "");
         setLastName(parsedUser.lastName || parsedUser.last_name || "");
         setProfileImage(parsedUser.profileImage || parsedUser.profile_image || parsedUser.image || null);
-        setLinkedGmail(parsedUser.gmail_account || null);
-        setIsDeactivated(Number(parsedUser.is_disabled || 0) === 1);
+
+        // setIsDeactivated removed
       }
     } catch (e) {
       console.error("Settings: Failed to parse user", e);
@@ -457,55 +452,7 @@ const Settings = () => {
     }
   };
 
-  const handleToggleDeactivate = async () => {
-    if (!user) return;
-    const proceed = isDeactivated
-      ? window.confirm("Do you want your account to be activated again?")
-      : window.confirm("The account will be deactivated after 30 days, do you want to proceed?");
-    if (!proceed) return;
-
-    setDeactivateLoading(true);
-    const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-    const nextDeactivated = !isDeactivated;
-    try {
-      const response = await fetch(`${API_URL}/api/account/deactivation`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.userId || user.id || user.user_id,
-          deactivate: nextDeactivated,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to update account status");
-      }
-
-      const updatedUser = {
-        ...user,
-        is_disabled: Number(data.is_disabled || 0),
-        deactivated_at: data.deactivated_at || null,
-      };
-      localStorage.setItem("user", JSON.stringify(updatedUser));
-      setUser(updatedUser);
-      setIsDeactivated(Number(data.is_disabled || 0) === 1);
-
-      toast({
-        title: nextDeactivated ? "Account deactivation scheduled" : "Account reactivated",
-        description: nextDeactivated
-          ? "Your account is now set for auto-deletion after 30 days."
-          : "Your deactivation schedule has been cancelled.",
-      });
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Update Failed",
-        description: error.message || "Could not update account status.",
-      });
-    } finally {
-      setDeactivateLoading(false);
-    }
-  };
+  // handleToggleDeactivate and related logic removed
 
   return (
     <div className="min-h-screen bg-background">
@@ -579,8 +526,8 @@ const Settings = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs font-black uppercase tracking-widest ml-1\">Email</Label>
-              <Input value={user.email || "N/A"} disabled className="h-12 rounded-xl bg-muted/50 border-2" />
+              <Label className="text-xs font-black uppercase tracking-widest ml-1">Username</Label>
+              <Input value={user.username || "N/A"} disabled className="h-12 rounded-xl bg-muted/50 border-2" />
             </div>
 
             <div className="space-y-2">
@@ -592,68 +539,9 @@ const Settings = () => {
                 </Button>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs font-black uppercase tracking-widest ml-1">Link Account</Label>
-              <div className="flex gap-2">
-                {linkedGmail ? (
-                  <div className="flex-1 flex items-center justify-between rounded-xl border-2 bg-green-50 dark:bg-green-900/20 px-4 py-3 border-green-200 dark:border-green-800">
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-green-600 dark:text-green-400" />
-                      <span className="text-sm font-semibold text-green-700 dark:text-green-300">{maskEmail(linkedGmail)}</span>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setGmailInput(linkedGmail || "");
-                        setGmailModalOpen(true);
-                      }}
-                      className="h-8 px-4 rounded-xl font-bold"
-                    >
-                      Change
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setGmailModalOpen(true)}
-                    className="h-12 rounded-xl border-2 font-bold flex-1"
-                  >
-                    <Mail className="h-4 w-4 mr-2" />
-                    Link Gmail Account
-                  </Button>
-                )}
-              </div>
-              {linkedGmail ? (
-                <p className="text-xs text-muted-foreground">This email will be used for password recovery if you forget your password.</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">No Gmail account is linked yet. Link one now so it is available in Forgot Password.</p>
-              )}
-            </div>
           </div>
 
-          <div className="pt-2 border-t">
-            <Label className="text-xs font-black uppercase tracking-widest ml-1">Account Status</Label>
-            <div className="mt-3 rounded-xl border-2 p-4 bg-muted/20 flex items-center justify-between gap-4">
-              <p className="text-sm text-muted-foreground">
-                {isDeactivated
-                  ? "This account is deactivated and scheduled for auto-deletion after 30 days."
-                  : "Deactivate your account if you want it queued for deletion after 30 days."}
-              </p>
-              <Button
-                type="button"
-                variant={isDeactivated ? "default" : "destructive"}
-                onClick={handleToggleDeactivate}
-                disabled={deactivateLoading}
-                className="min-w-32 font-bold"
-              >
-                {deactivateLoading ? "Please wait..." : isDeactivated ? "Activate" : "Deactivate"}
-              </Button>
-            </div>
-          </div>
+          {/* Account Status Deactivation section removed as requested */}
 
           <div className="pt-4">
             <Button onClick={handleSaveProfile} disabled={saving} className="w-full py-8 text-xl font-black rounded-2xl shadow-xl uc-gradient-btn active:scale-95 transition-all">
@@ -787,50 +675,7 @@ const Settings = () => {
         </DialogContent>
       </Dialog>
 
-      {/* LINK GMAIL MODAL */}
-      <Dialog open={gmailModalOpen} onOpenChange={setGmailModalOpen}>
-        <DialogContent className="sm:max-w-md rounded-3xl p-0 overflow-hidden border-none shadow-2xl">
-          <div className="bg-primary p-8 text-white">
-            <DialogHeader>
-              <DialogTitle className="text-2xl font-black uppercase italic tracking-tighter">Link Gmail Account</DialogTitle>
-              <p className="text-primary-foreground/80 text-sm">This will be used for password recovery.</p>
-            </DialogHeader>
-          </div>
 
-          <div className="p-8 space-y-6 bg-background">
-            <div className="space-y-2">
-              <Label className="text-xs font-black uppercase text-muted-foreground ml-1">Gmail Address</Label>
-              <Input
-                type="email"
-                value={gmailInput}
-                onChange={(e) => setGmailInput(e.target.value)}
-                placeholder="your.email@gmail.com"
-                className="h-12 rounded-xl border-2"
-              />
-              <p className="text-xs text-muted-foreground">Enter a valid Gmail address</p>
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setGmailModalOpen(false)}
-                className="px-6 py-2 rounded-xl"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={handleLinkGmail}
-                disabled={gmailLinking || !gmailInput.trim()}
-                className="px-6 py-2 rounded-xl uc-gradient-btn text-white font-bold"
-              >
-                {gmailLinking ? "Linking..." : "Link Gmail"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
