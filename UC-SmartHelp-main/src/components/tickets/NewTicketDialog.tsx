@@ -27,7 +27,7 @@ const NewTicketDialog = ({ open, onOpenChange }: Props) => {
     "Accounting Office": ["Balance inquiry", "Official receipt request", "Payment verification (GCash, bank, etc.)", "Promissory Notes", "Refund requests", "Tuition fee breakdown"].sort(),
     "Cashiers Office": ["Balance Inquiry", "Down Payment Concern", "GCash/Online Payment Issue", "Installment Payment", "Lost Receipt Concern", "Miscellaneous Fees Payment", "Official Receipt Request", "Overpayment Concern", "Payment Adjustment Request", "Payment Deadline Inquiry", "Payment Inquiry", "Payment Posting Delay", "Payment Verification", "Refund Request", "Tuition Payment"].sort(),
     "Clinic": ["Clinic Schedule Inquiry", "Dental Checkup Inquiry", "Emergency Assistance", "First Aid Concern", "Health Assessment", "Health Record Request", "Medical Certificate Request", "Medical Consultation", "Medicine Availability Inquiry", "Vaccination Inquiry"].sort(),
-    "CCS Office": ["Academic Advising", "Capstone/Thesis Guidelines", "Curriculum Inquiry", "Department Announcement/Update", "Department Clearance Request", "Faculty Consultation Request", "Internship/OJT Requirements", "Schedule Conflict Concern", "Section Assignment Concern", "Student Organization/Club Concern", "Subject Enrollment Assistance", "Subject Prerequisites Inquiry"].sort(),
+    "CCS Office": ["Academic Advising", "Capstone/Thesis Guidelines", "Curriculum Inquiry", "Department Clearance Request", "Faculty Consultation Request", "Internship/OJT Requirements", "Schedule Conflict Concern", "Section Assignment Concern", "Student Organization/Club Concern", "Subject Enrollment Assistance", "Subject Prerequisites Inquiry"].sort(),
     "Registrar Office": ["Add/Drop Subjects", "Certificate Request", "Clearance Concern", "Diploma Request", "Enrollment Concern", "Grade Correction", "Grade Inquiry", "Graduation Requirements", "Honorable Dismissal", "Schedule Concern", "Section Change Request", "Student Records Update", "Subject Registration", "Transcript of Records Request", "Transfer Credentials"].sort(),
     "SAO (Student Affairs Office)": ["Bullying or complaint reports", "Enrollment Requirements", "Student discipline concerns", "Uniform Exemption Requirements"].sort(),
     "Scholarship Office": ["External Scholarship Concern", "Scholarship Allowance", "Scholarship Appeal", "Scholarship Application", "Scholarship Cancellation", "Scholarship Deadline Inquiry", "Scholarship Discount Concern", "Scholarship Document Submission", "Scholarship Eligibility", "Scholarship Grades Compliance", "Scholarship Renewal", "Scholarship Requirements", "Scholarship Status", "Scholarship Transfer", "Scholarship Verification"].sort(),
@@ -117,15 +117,15 @@ const NewTicketDialog = ({ open, onOpenChange }: Props) => {
                 <CheckCircle2 className="h-16 w-16 text-green-600 animate-bounce" />
               </div>
             </div>
-            <h2 className="text-3xl font-black text-foreground uppercase italic tracking-tighter">Ticket Created Successfully!</h2>
+            <h2 className="text-3xl font-black text-foreground uppercase tracking-wide">Ticket Created Successfully!</h2>
           </div>
         ) : (
           <>
             <div className="bg-primary p-8 text-white relative">
 
               <DialogHeader>
-                <DialogTitle className="text-3xl font-black uppercase italic tracking-tighter">New Ticket</DialogTitle>
-                <p className="text-primary-foreground/80 font-medium italic">Filing a formal concern to University of Cebu.</p>
+                <DialogTitle className="text-3xl font-black uppercase tracking-wide">New Ticket</DialogTitle>
+                <p className="text-primary-foreground/80 font-medium tracking-wider">Filing a formal concern to University of Cebu.</p>
               </DialogHeader>
             </div>
             <div className="p-8 space-y-6 bg-background">

@@ -14,7 +14,7 @@ const AuditTrailPage = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <div className="container max-w-2xl py-12 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="container max-w-4xl py-12 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="space-y-2 text-center sm:text-left">
           <h1 className="text-3xl font-black text-foreground uppercase italic tracking-tight">Audit Trail</h1>
           <p className="text-muted-foreground font-medium">System-wide activity log.</p>

@@ -117,7 +117,7 @@ const Register = () => {
             <X className="h-6 w-6" />
           </button>
 
-          <h2 className="text-center text-3xl font-bold italic text-white tracking-widest uppercase">Register</h2>
+          <h2 className="text-center text-3xl font-bold text-white tracking-wide uppercase">Register</h2>
 
           <form onSubmit={handleRegister} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">

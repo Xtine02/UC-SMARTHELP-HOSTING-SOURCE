@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Ticket as TicketIcon, ClipboardList, MessagesSquare } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import NewTicketDialog from "@/components/tickets/NewTicketDialog";

@@ -8,7 +8,7 @@ import Navbar from "@/components/Navbar";
 
 // Safely import assets
 import heroImg from "@/assets/hero-illustration.jpg";
-import logo from "@/assets/uc-smarthelp-logo.jpg";
+import logo from "@/assets/newlogo.png";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -58,7 +58,7 @@ const Index = () => {
     { 
       icon: BarChart3, 
       title: "Real-time Updates", 
-      desc: "Stay updated with announcements and ticket status." 
+      desc: "Stay updated with ticket status." 
     },
   ];
 
@@ -79,11 +79,12 @@ const Index = () => {
             <div className="flex justify-center md:justify-start relative group mb-4">
               <div className="absolute inset-0 bg-primary/10 rounded-full blur-3xl opacity-40 scale-150" />
               <div className="relative h-40 w-64 overflow-hidden flex items-center justify-center">
-                <img 
-                  src={logo} 
-                  alt="UC SmartHelp Logo" 
-                  className="w-full scale-[2.2] -translate-y-4 object-contain mix-blend-multiply contrast-[1.1] brightness-[1.05]"
-                  onError={(e) => (e.currentTarget.style.display = 'none')} 
+                <img
+                  src={logo}
+                  alt="UC SmartHelp Logo"
+                  className="w-full h-full object-contain mix-blend-multiply opacity-95"
+                  style={{ background: 'transparent' }}
+                  onError={(e) => (e.currentTarget.style.display = 'none')}
                 />
               </div>
             </div>

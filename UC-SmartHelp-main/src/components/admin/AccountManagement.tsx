@@ -490,19 +490,11 @@ const AccountManagement = () => {
                         className="rounded-lg"
                       />
                     </div>
-                    <div className="sm:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                    <div className="sm:col-span-2">
                       <div className="space-y-2">
                         <label className="text-sm font-medium text-foreground">Password</label>
                         <Input value="********" readOnly className="rounded-lg tracking-widest" />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleSendResetLink(editUser.username)}
-                        disabled={resetLoading}
-                        className="rounded-lg bg-primary/10 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/20 disabled:opacity-50"
-                      >
-                        {resetLoading ? "Sending..." : "Send Reset Link"}
-                      </button>
                     </div>
 
                   </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -22,13 +22,16 @@ import {
 
 type TicketStatus = "pending" | "in_progress" | "resolved" | "reopened" | "unattended";
 
-const normalizeStatus = (status: any) =>
-  status
-    ?.toString()
-    .toLowerCase()
-    .trim()
-    .replace(/[\s\-]+/g, '_')
-    || 'pending';
+const normalizeStatus = (status: string | null | undefined): string => {
+  // Direct mapping without complex transformations
+  const statusStr = status?.toString().toLowerCase().trim();
+  
+  if (statusStr === 'unattended') return 'unattended';
+  if (statusStr === 'resolved' || statusStr === 'closed') return 'resolved';
+  if (statusStr === 'in_progress') return 'in_progress';
+  if (statusStr === 'reopened') return 'reopened';
+  return 'pending';
+};
 
 // Helper to check if ticket is new (unacknowledged) for scholarship staff
 const isStaffTicketNew = (ticket: Ticket): boolean => {
@@ -75,7 +78,7 @@ const ScholarshipDashboard = () => {
   const [filter, setFilter] = useState<"all" | TicketStatus>("all");
   const [search, setSearch] = useState<string>("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [stats, setStats] = useState<Stats>({ all: 0, pending: 0, in_progress: 0, resolved: 0, reopened: 0 });
+  const [stats, setStats] = useState<Stats>({ all: 0, pending: 0, in_progress: 0, resolved: 0, reopened: 0, unattended: 0 });
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [loading, setLoading] = useState(true);
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
@@ -85,6 +88,7 @@ const ScholarshipDashboard = () => {
   const isStaffRole = (user?.role || "").toString().trim().toLowerCase() === "staff";
   
   const { showConfirm, handleConfirmLeave, handleStayOnPage } = useBackConfirm(undefined);
+  const lastUpdateRef = useRef<string>("");
 
   const fetchData = async () => {
     try {
@@ -132,8 +136,13 @@ const ScholarshipDashboard = () => {
 
   useEffect(() => {
     fetchData();
-    // Removed auto-refresh - was causing dashboard to shake/flicker
-    // Tickets will be updated on filter/sort/status changes instead
+    
+    // Set up real-time polling for ticket updates (every 3 seconds for faster updates)
+    const interval = setInterval(() => {
+      fetchData();
+    }, 3000);
+    
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   const handleStatusChange = async (ticketId: string, newStatus: string) => {
@@ -169,12 +178,14 @@ const ScholarshipDashboard = () => {
           else if (oldStatus === "reopened") updated.reopened--;
           else if (oldStatus === "in_progress") updated.in_progress--;
           else if (oldStatus === "resolved") updated.resolved--;
+          else if (oldStatus === "unattended") updated.unattended--;
           
           // Increment new status count
           if (newStatus === "pending") updated.pending++;
           else if (newStatus === "reopened") updated.reopened++;
           else if (newStatus === "in_progress") updated.in_progress++;
           else if (newStatus === "resolved") updated.resolved++;
+          else if (newStatus === "unattended") updated.unattended++;
           
           return updated;
         });
@@ -360,13 +371,14 @@ const ScholarshipDashboard = () => {
             </div>
           </div>
 
-          <div className="grid gap-6 sm:grid-cols-5">
+          <div className="grid gap-6 sm:grid-cols-6">
             {[
               { id: "all", label: "All Tickets", value: stats.all, border: "border-slate-400", text: "text-slate-500" },
               { id: "pending", label: "Pending Concerns", value: stats.pending, border: "border-amber-400", text: "text-amber-500" },
               { id: "in_progress", label: "In-Progress", value: stats.in_progress, border: "border-blue-400", text: "text-blue-500" },
-              { id: "resolved", label: "Resolved/Closed", value: stats.resolved, border: "border-emerald-400", text: "text-emerald-500" },
               { id: "reopened", label: "Reopen", value: stats.reopened, border: "border-pink-400", text: "text-pink-500" },
+              { id: "unattended", label: "Unattended", value: stats.unattended, border: "border-red-400", text: "text-red-500" },
+              { id: "resolved", label: "Resolved/Closed", value: stats.resolved, border: "border-emerald-400", text: "text-emerald-500" },
             ].map((item) => (
               <button
                 key={item.id}
@@ -517,11 +529,19 @@ const ScholarshipDashboard = () => {
                                 className={`h-7 w-fit px-3 rounded-full border shadow-sm text-[10px] font-black uppercase tracking-widest focus:ring-0 focus:ring-offset-0 transition-all hover:brightness-95 ${
                                   t.status === "in_progress" 
                                     ? "bg-blue-100 text-blue-700 border-blue-200" 
+                                    : t.status === "unattended"
+                                    ? "bg-red-100 text-red-700 border-red-200"
                                     : "bg-emerald-100 text-emerald-700 border-emerald-200"
                                 }`}
                               >
                                 <span className="flex items-center gap-1">
-                                  {t.status === 'in_progress' ? 'In-Progress' : 'Resolved/Closed'}
+                                  {(() => {
+                                    if (t.status === 'in_progress') return 'In-Progress';
+                                    if (t.status === 'unattended') return 'Unattended';
+                                    if (t.status === 'pending') return 'Pending';
+                                    if (t.status === 'reopened') return 'Reopened';
+                                    return 'Resolved/Closed';
+                                  })()}
                                   <ChevronDown className="h-3 w-3 opacity-50" />
                                 </span>
                               </SelectTrigger>

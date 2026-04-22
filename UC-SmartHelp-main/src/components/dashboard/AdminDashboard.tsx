@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -6,6 +7,7 @@ import TicketList from "@/components/tickets/TicketList";
 import ReviewAnalytics from "@/components/analytics/ReviewAnalytics";
 import AccountManagement from "@/components/admin/AccountManagement";
 import AuditTrail from "@/components/admin/AuditTrail";
+import ChatHistoryPage from "@/pages/ChatHistoryPage";
 import Navbar from "@/components/Navbar";
 import { useBackConfirm } from "@/hooks/use-back-confirm";
 import { format } from "date-fns";
@@ -30,15 +32,6 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { Download } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  AlertDialog as ChatDeleteDialog,
-  AlertDialogAction as ChatDeleteAction,
-  AlertDialogCancel as ChatDeleteCancel,
-  AlertDialogContent as ChatDeleteContent,
-  AlertDialogDescription as ChatDeleteDescription,
-  AlertDialogHeader as ChatDeleteHeader,
-  AlertDialogTitle as ChatDeleteTitle,
-} from "@/components/ui/alert-dialog";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -55,24 +48,13 @@ interface DeptStat {
   in_progress: number;
   resolved: number;
   reopened: number;
+  unattended: number;
 }
 
 interface ChatbotAnalytics {
   totalMessages: number;
   activeUsers: number;
   peakTime: string;
-}
-
-interface ChatHistoryMessage {
-  id?: number | null;
-  user_id?: number | string | null;
-  message?: string | null;
-  role?: string | null;
-  created_at?: string | null;
-  user_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  username?: string | null;
 }
 
 interface User {
@@ -122,6 +104,7 @@ const normalizeStatus = (status: string | null | undefined): string =>
     || 'pending';
 
 const AdminDashboard = () => {
+  const navigate = useNavigate();
   const userJson = localStorage.getItem("user");
   const user = userJson ? JSON.parse(userJson) : null;
 
@@ -129,11 +112,7 @@ const AdminDashboard = () => {
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"department" | "tickets" | "accounts" | "audit" | "feedback" | "chatbot" | "chat-history">("department");
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatHistoryMessage[]>([]);
-  const [selectedChatMessageIds, setSelectedChatMessageIds] = useState<Set<number>>(new Set());
-  const [expandedChatDayKeys, setExpandedChatDayKeys] = useState<Set<string>>(new Set());
-  const [showChatDeleteConfirm, setShowChatDeleteConfirm] = useState(false);
-  const [showDeptDialog, setShowDeptDialog] = useState(false);
+    const [showDeptDialog, setShowDeptDialog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<"csv" | "pdf">("csv");
@@ -154,6 +133,7 @@ const AdminDashboard = () => {
     { key: "feedback", label: "Feedback Analytic" },
     { key: "chat-history", label: "Chat History" },
   ] as const;
+  const lastUpdateRef = useRef<string>("");
 
   useEffect(() => {
     const fetchTickets = async () => {
@@ -190,6 +170,13 @@ const AdminDashboard = () => {
     };
 
     fetchTickets();
+    
+    // Set up real-time polling for ticket updates (every 3 seconds for faster updates)
+    const interval = setInterval(() => {
+      fetchTickets();
+    }, 3000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -214,39 +201,13 @@ const AdminDashboard = () => {
 
 
 
-  // Fetch chat history for all users in admin view
-  useEffect(() => {
-    if (view !== "chat-history") {
-      setChatMessages([]);
-      return;
-    }
-
-    const fetchAllChatHistory = async () => {
-      try {
-        const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-        const historyUrl = new URL(`${API_URL}/api/chat-history/all`);
-        historyUrl.searchParams.set("limit", "500");
-
-        const response = await fetch(historyUrl.toString());
-        if (!response.ok) throw new Error("Failed to fetch chat history");
-
-        const data = (await response.json()) as ChatHistoryMessage[];
-        setChatMessages(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error("Failed to fetch chat history:", error);
-        setChatMessages([]);
-      }
-    };
-
-    fetchAllChatHistory();
-  }, [view]);
-
+  
   const deptStats = useMemo(() => {
     const map = new Map<string, DeptStat>();
 
     const addDept = (name: string) => {
       if (!map.has(name)) {
-        map.set(name, { name, all: 0, pending: 0, in_progress: 0, resolved: 0, reopened: 0 });
+        map.set(name, { name, all: 0, pending: 0, in_progress: 0, resolved: 0, reopened: 0, unattended: 0 });
       }
       return map.get(name)!;
     };
@@ -260,6 +221,7 @@ const AdminDashboard = () => {
       else if (status === "in_progress") stat.in_progress += 1;
       else if (status === "reopened") stat.reopened += 1;
       else if (status === "resolved" || status === "closed") stat.resolved += 1;
+      else if (status === "unattended") stat.unattended += 1;
     });
 
     // Ensure common departments always appear
@@ -290,95 +252,6 @@ const AdminDashboard = () => {
 
   const selectedDeptCount = filteredStats.reduce((sum, d) => sum + d.all, 0);
 
-  // Chat history helper functions
-  const sortedChatMessages = useMemo(
-    () =>
-      [...chatMessages].sort((a, b) => {
-        const t1 = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const t2 = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return t1 - t2;
-      }),
-    [chatMessages]
-  );
-
-  const groupedChatMessages = useMemo(() => {
-    const groups = new Map<string, ChatHistoryMessage[]>();
-    sortedChatMessages.forEach((message) => {
-      const rawDate = message.created_at;
-      const date = rawDate ? new Date(rawDate) : new Date();
-      const dayKey = format(date, "yyyy-MM-dd");
-      const existing = groups.get(dayKey) || [];
-      existing.push(message);
-      groups.set(dayKey, existing);
-    });
-    return Array.from(groups.entries()).sort(([a], [b]) => (a < b ? 1 : -1));
-  }, [sortedChatMessages]);
-
-  const formatGroupLabel = (dateKey: string) => {
-    const date = new Date(`${dateKey}T00:00:00`);
-    const todayKey = format(new Date(), "yyyy-MM-dd");
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayKey = format(yesterday, "yyyy-MM-dd");
-    if (dateKey === todayKey) return "Today";
-    if (dateKey === yesterdayKey) return "Yesterday";
-    return format(date, "MMMM d, yyyy");
-  };
-
-  const getSenderType = (message: ChatHistoryMessage): "User" | "Assistant" | "Unknown" => {
-    const senderType = String(message.role || "").toLowerCase().trim();
-    if (senderType === "user") return "User";
-    if (senderType === "assistant") return "Assistant";
-    return "Unknown";
-  };
-
-  const toggleChatSelect = (messageId: number) => {
-    const next = new Set(selectedChatMessageIds);
-    if (next.has(messageId)) next.delete(messageId);
-    else next.add(messageId);
-    setSelectedChatMessageIds(next);
-  };
-
-  const toggleChatSelectAll = () => {
-    if (selectedChatMessageIds.size > 0 && selectedChatMessageIds.size === sortedChatMessages.length) {
-      setSelectedChatMessageIds(new Set());
-      return;
-    }
-    setSelectedChatMessageIds(new Set(sortedChatMessages.map((item) => Number(item.id)).filter((id) => Number.isFinite(id))));
-  };
-
-  const handleDeleteChatSelected = async () => {
-    if (selectedChatMessageIds.size === 0) return;
-    try {
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      const response = await fetch(`${API_URL}/api/chat-history`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operation: "delete",
-          ids: Array.from(selectedChatMessageIds),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to delete selected messages");
-      }
-
-      setChatMessages((prev) => prev.filter((item) => !selectedChatMessageIds.has(Number(item.id))));
-      setSelectedChatMessageIds(new Set());
-      setShowChatDeleteConfirm(false);
-    } catch (error) {
-      console.error("Failed to delete chat messages:", error);
-    }
-  };
-
-  const toggleChatDayExpansion = (dayKey: string) => {
-    const next = new Set(expandedChatDayKeys);
-    if (next.has(dayKey)) next.delete(dayKey);
-    else next.add(dayKey);
-    setExpandedChatDayKeys(next);
-  };
-
   const downloadBlob = (content: BlobPart, filename: string, type: string) => {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -396,13 +269,14 @@ const AdminDashboard = () => {
     if (targetTab === "department") {
       return {
         title: "Department Analytics",
-        headers: ["Department", "All Tickets", "Pending", "In Progress", "Reopen", "Resolved"],
+        headers: ["Department", "All Tickets", "Pending", "In Progress", "Reopen", "Unattended", "Resolved"],
         rows: filteredStats.map((d) => [
           d.name,
           String(d.all),
           String(d.pending),
           String(d.in_progress),
           String(d.reopened),
+          String(d.unattended),
           String(d.resolved),
         ]),
       };
@@ -645,6 +519,7 @@ const AdminDashboard = () => {
                             <TableHead className="font-bold text-center py-3">Pending</TableHead>
                             <TableHead className="font-bold text-center py-3">In-Progress</TableHead>
                             <TableHead className="font-bold text-center py-3">Reopen</TableHead>
+                            <TableHead className="font-bold text-center py-3">Unattended</TableHead>
                             <TableHead className="font-bold text-center py-3">Resolved</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -676,6 +551,11 @@ const AdminDashboard = () => {
                                 </span>
                               </TableCell>
                               <TableCell className="text-center py-3">
+                                <span className="text-red-600 font-bold px-3 py-1 bg-red-50 rounded-full text-xs">
+                                  {d.unattended}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-center py-3">
                                 <span className="text-green-600 font-bold px-3 py-1 bg-green-50 rounded-full text-xs">
                                   {d.resolved}
                                 </span>
@@ -684,7 +564,7 @@ const AdminDashboard = () => {
                           ))}
                           {filteredStats.length === 0 && (
                             <TableRow>
-                              <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
+                              <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
                                 No departments match your search.
                               </TableCell>
                             </TableRow>
@@ -720,123 +600,8 @@ const AdminDashboard = () => {
             {view === "accounts" && <AccountManagement />}
             {view === "feedback" && <ReviewAnalytics userDepartment={user?.department} userRole={user?.role} />}
             {view === "chat-history" && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-2xl font-bold text-foreground">All Accounts Chat History</h2>
-                    <p className="text-sm text-muted-foreground mt-2">View chat history from all users</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 ml-auto">
-                    <Checkbox
-                      checked={sortedChatMessages.length > 0 && selectedChatMessageIds.size === sortedChatMessages.length}
-                      onCheckedChange={toggleChatSelectAll}
-                    />
-                    <span className="text-sm text-muted-foreground">Select all</span>
-                  </div>
-                </div>
-
-                {selectedChatMessageIds.size > 0 && (
-                  <div className="flex items-center justify-between bg-destructive/10 p-4 rounded-xl border border-destructive/20">
-                    <span className="text-sm font-bold text-destructive">
-                      {selectedChatMessageIds.size} message(s) selected
-                    </span>
-                    <button
-                      onClick={() => setShowChatDeleteConfirm(true)}
-                      className="flex items-center gap-2 bg-destructive text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-destructive/90 transition-all shadow-lg active:scale-95"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      DELETE SELECTED
-                    </button>
-                  </div>
-                )}
-
-                <ChatDeleteDialog open={showChatDeleteConfirm} onOpenChange={setShowChatDeleteConfirm}>
-                  <ChatDeleteContent>
-                    <ChatDeleteHeader>
-                      <ChatDeleteTitle>Delete selected messages?</ChatDeleteTitle>
-                      <ChatDeleteDescription>
-                        Are you sure you want to permanently delete {selectedChatMessageIds.size} selected message(s)?
-                      </ChatDeleteDescription>
-                    </ChatDeleteHeader>
-                    <div className="flex gap-3 justify-end">
-                      <ChatDeleteCancel onClick={() => setShowChatDeleteConfirm(false)}>
-                        Cancel
-                      </ChatDeleteCancel>
-                      <ChatDeleteAction onClick={handleDeleteChatSelected} className="bg-destructive hover:bg-destructive/90">
-                        Yes, Delete
-                      </ChatDeleteAction>
-                    </div>
-                  </ChatDeleteContent>
-                </ChatDeleteDialog>
-
-                <div className="space-y-6">
-                  {groupedChatMessages.map(([dateKey, entries]) => (
-                    <div key={dateKey} className="space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleChatDayExpansion(dateKey)}
-                        className="w-full rounded-lg border bg-background px-3 py-2 text-left hover:bg-muted/30 transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-foreground">{formatGroupLabel(dateKey)}</p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {(entries[0]?.message || "").toString() || "No message"}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{entries.length} message(s)</p>
-                          </div>
-                          {expandedChatDayKeys.has(dateKey) ? (
-                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          )}
-                        </div>
-                      </button>
-                      {expandedChatDayKeys.has(dateKey) && (
-                        <div className="space-y-2">
-                          {entries.map((entry) => {
-                            const userName = entry.first_name && entry.last_name
-                              ? `${entry.first_name} ${entry.last_name}`
-                              : entry.username || `User ${entry.user_id}`;
-                            return (
-                              <div
-                                key={String(entry.id)}
-                                className="flex items-start justify-between rounded-lg border px-3 py-2 bg-background"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <Checkbox
-                                    checked={selectedChatMessageIds.has(Number(entry.id))}
-                                    onCheckedChange={() => toggleChatSelect(Number(entry.id))}
-                                  />
-                                  <div className="text-left min-w-0">
-                                    <p className="font-medium truncate max-w-[580px]">
-                                      {(entry.message || "").toString() || "No message"}
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">
-                                      <span className="font-semibold">{userName}</span> • {entry.created_at ? format(new Date(entry.created_at), "MMM d, yyyy h:mm a") : "No date"}
-                                    </p>
-                                  </div>
-                                </div>
-                                <span className="ml-3 shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                  {getSenderType(entry)}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {groupedChatMessages.length === 0 && (
-                    <div className="text-center text-muted-foreground py-10">
-                      No chat history available.
-                    </div>
-                  )}
-                </div>
+              <div className="p-6">
+                <ChatHistoryPage />
               </div>
             )}
           </div>

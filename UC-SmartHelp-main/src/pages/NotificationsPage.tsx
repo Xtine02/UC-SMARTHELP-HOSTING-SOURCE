@@ -16,7 +16,6 @@ interface Notification {
   title: string;
   message: string;
   ticket_id?: number;
-  announcement_id?: number;
   is_read: number;
   created_at: string;
 }
@@ -289,7 +288,7 @@ const NotificationsPage: React.FC = () => {
               <Bell className="h-16 w-16 text-muted-foreground mb-4" />
               <h3 className="text-lg font-semibold mb-2">No notifications yet</h3>
               <p className="text-muted-foreground text-center">
-                You'll see notifications here when there are updates on your tickets or new announcements.
+                You'll see notifications here when there are updates on your tickets.
               </p>
             </CardContent>
           </Card>
@@ -328,8 +327,6 @@ const NotificationsPage: React.FC = () => {
                             } else {
                               navigate('/tickets');
                             }
-                          } else if (notification.type === 'announcement') {
-                            navigate('/announcements');
                           }
                         }}
                       >

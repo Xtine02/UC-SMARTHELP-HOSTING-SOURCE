@@ -10,7 +10,7 @@ import {
 import { LogOut, User as UserIcon, Bell } from "lucide-react";
 import { performLogout, getDashboardPath } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import logo from "@/assets/uc-smarthelp-logo.jpg";
+import logo from "@/assets/newlogo.png";
 
 interface User {
   id?: number;
@@ -37,7 +37,6 @@ interface Notification {
   message: string;
   is_read: number;
   created_at: string;
-  announcement_id?: number;
   ticket_id?: number;
 }
 
@@ -292,19 +291,12 @@ const Navbar = () => {
       <div className="container flex h-16 items-center justify-between px-4 sm:px-8">
         <div className="flex items-center gap-4">
           <Link to="/?noRedirect=1" className="flex items-center gap-2 animate-in fade-in duration-300">
-            <img src={logo} alt="UC SmartHelp" className="h-16 w-auto" />
+            <img src={logo} alt="UC SmartHelp" className="h-16 w-auto opacity-90" />
           </Link>
         </div>
 
         {/* Navigation Links */}
         <div className="hidden items-center gap-6 md:flex">
-          <button
-            type="button"
-            onClick={() => handleTopNavClick("/announcements")}
-            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Announcements
-          </button>
           <button
             type="button"
             onClick={() => handleTopNavClick("/about")}
@@ -416,8 +408,6 @@ const Navbar = () => {
                                     } else {
                                       navigate('/tickets');
                                     }
-                                  } else if (notification.type === 'announcement') {
-                                    navigate(`/announcements#announcement-${notification.announcement_id || notificationId}`);
                                   }
                                 }}
                               >

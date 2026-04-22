@@ -178,8 +178,8 @@ const AuditTrail = ({ userId, all = false }: AuditTrailProps) => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="rounded-xl border bg-card overflow-x-auto w-full">
-        <Table className="w-full">
+      <div className="rounded-xl border bg-card overflow-x-auto max-w-7xl">
+        <Table className="w-full text-lg">
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead className="w-[50px] text-center">
@@ -207,29 +207,29 @@ const AuditTrail = ({ userId, all = false }: AuditTrailProps) => {
             ) : (
               auditEntries.map((entry) => (
                 <TableRow key={entry.id} className={`hover:bg-muted/20 cursor-pointer transition-all ${selectedIds.has(entry.id) ? 'bg-destructive/5 border-l-4 border-destructive' : 'border-l-4 border-transparent'}`}>
-                  <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                  <TableCell className="text-center py-3" onClick={(e) => e.stopPropagation()}>
                     <Checkbox 
                       checked={selectedIds.has(entry.id)}
                       onCheckedChange={() => toggleSelect(entry.id)}
                     />
                   </TableCell>
                   {all && (
-                    <TableCell className="text-sm font-mono text-muted-foreground">
+                    <TableCell className="text-base font-mono text-muted-foreground py-3">
                       {entry.user_id}
                     </TableCell>
                   )}
-                  <TableCell>
-                    <Badge className={`${getActionColor(entry.action)} border-0 font-medium`}>
+                  <TableCell className="py-3">
+                    <Badge className={`${getActionColor(entry.action)} border-0 font-medium text-sm py-1`}>
                       {entry.action}
                     </Badge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="py-3">
                     {entry.entity_type && entry.entity_id ? (
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={`${getEntityTypeColor(entry.entity_type)} text-xs`}>
+                        <Badge variant="outline" className={`${getEntityTypeColor(entry.entity_type)} text-sm py-1`}>
                           {entry.entity_type}
                         </Badge>
-                        <span className="text-sm font-mono text-muted-foreground">
+                        <span className="text-base font-mono text-muted-foreground">
                           #{entry.entity_id}
                         </span>
                       </div>
@@ -237,7 +237,7 @@ const AuditTrail = ({ userId, all = false }: AuditTrailProps) => {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="text-base text-muted-foreground py-3">
                     {format(new Date(entry.created_at), "MMM dd, yyyy HH:mm")}
                   </TableCell>
                 </TableRow>

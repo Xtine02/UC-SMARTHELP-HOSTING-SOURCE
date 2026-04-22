@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -222,7 +222,7 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
   useEffect(() => {
     fetchTickets();
 
-    const interval = setInterval(fetchTickets, 5000);
+    const interval = setInterval(fetchTickets, 3000);
     const handleTicketUpdated = () => fetchTickets();
     window.addEventListener('ticket-updated', handleTicketUpdated);
 
@@ -543,7 +543,13 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
                     <TableCell className="text-sm max-w-[500px] truncate">{t.description || "---"}</TableCell>
                     <TableCell>
                       <Badge className={`${statusColors[t.status] || "bg-gray-400"} border-none font-bold uppercase text-[10px] tracking-wider px-2.5 py-0.5`}>
-                        {t.status === "in_progress" ? "In-Progress" : t.status === "resolved" ? "Resolved" : t.status === "reopened" ? "Reopened" : t.status === "unattended" ? "Unattended" : "Pending"}
+                        {(() => {
+                          if (t.status === "in_progress") return "In-Progress";
+                          if (t.status === "unattended") return "Unattended";
+                          if (t.status === "resolved") return "Resolved";
+                          if (t.status === "reopened") return "Reopened";
+                          return "Pending";
+                        })()}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm">

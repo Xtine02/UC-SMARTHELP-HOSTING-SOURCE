@@ -12,7 +12,6 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Settings from "./pages/Settings";
 import AuditTrail from "./pages/AuditTrail";
-import Announcements from "./pages/Announcements";
 import Map from "./pages/Map";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
@@ -185,8 +184,7 @@ const App = () => {
             {/* Support Pages */}
             <Route path="/settings" element={<Settings />} />
             <Route path="/audit-trail" element={<AuditTrail />} />
-            <Route path="/announcements" element={<Announcements />} />
-            <Route path="/notifications" element={<NotificationsPage />} />
+                        <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/analytics" element={<DepartmentAnalytics />} />
             <Route path="/map" element={<Map />} />
             <Route path="/about" element={<About />} />

@@ -14,30 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      announcements: {
-        Row: {
-          author_id: string
-          content: string
-          created_at: string
-          id: string
-          title: string
-        }
-        Insert: {
-          author_id: string
-          content: string
-          created_at?: string
-          id?: string
-          title: string
-        }
-        Update: {
-          author_id?: string
-          content?: string
-          created_at?: string
-          id?: string
-          title?: string
-        }
-        Relationships: []
-      }
       departments: {
         Row: {
           created_at: string

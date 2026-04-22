@@ -3,7 +3,7 @@ import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import { getLoggedInRedirectPath } from "@/lib/utils";
-import logo from "@/assets/uc-smarthelp-logo.jpg";
+import logo from "@/assets/newlogo.png";
 const About = () => {
   const navigate = useNavigate();
   return (
@@ -13,7 +13,7 @@ const About = () => {
       <div className="container max-w-3xl py-16 space-y-8">
       <div className="flex items-start justify-between mb-6">
         <div className="text-center flex-1">
-          <img src={logo} alt="UC SmartHelp" className="mx-auto h-24 mb-6" />
+          <img src={logo} alt="UC SmartHelp" className="mx-auto h-32 w-auto max-w-xs object-contain mix-blend-multiply dark:mix-blend-screen opacity-90 mb-6" />
           <h1 className="text-3xl font-bold text-foreground">About UC SmartHelp</h1>
         </div>
         <Button

@@ -5,13 +5,6 @@ import Navbar from "@/components/Navbar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -27,7 +20,7 @@ interface ChatHistoryMessage {
   message?: string | null;
   role?: string | null;
   created_at?: string | null;
-  user_name?: string | null;
+  username?: string | null;
 }
 
 interface User {
@@ -45,6 +38,8 @@ const ChatHistoryPage = () => {
   const [expandedDayKeys, setExpandedDayKeys] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  // Remove selectedDateTab for admin, use collapsible per day like staff/student
 
   const userRaw = localStorage.getItem("user");
 
@@ -59,6 +54,9 @@ const ChatHistoryPage = () => {
   const userRole = (user?.role || "").toString().toLowerCase();
   const isAdmin = userRole === "admin";
   const isGuest = localStorage.getItem("uc_guest") === "1";
+
+  // Debug admin detection
+  console.log(`ChatHistoryPage: user=${JSON.stringify(user)}, userId=${userId}, userRole=${userRole}, isAdmin=${isAdmin}`);
 
   useEffect(() => {
     const onPopState = () => {
@@ -82,10 +80,6 @@ const ChatHistoryPage = () => {
         if (!response.ok) throw new Error("Failed to fetch users");
         const data = (await response.json()) as User[];
         setAllUsers(Array.isArray(data) ? data : []);
-        // Set default to first user if available
-        if (data.length > 0 && !selectedUserId) {
-          setSelectedUserId(String(data[0].id));
-        }
       } catch (error) {
         console.error("Failed to fetch users:", error);
         setAllUsers([]);
@@ -93,7 +87,7 @@ const ChatHistoryPage = () => {
     };
 
     fetchAllUsers();
-  }, [isAdmin, selectedUserId]);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!userId && !isGuest) {
@@ -101,27 +95,31 @@ const ChatHistoryPage = () => {
       return;
     }
 
+
     const fetchHistory = async () => {
       try {
-        // Determine which user ID to fetch history for
-        const targetUserId = isAdmin && selectedUserId ? selectedUserId : userId;
-
-        if (!targetUserId) {
-          setMessages([]);
-          return;
-        }
-
+        let historyUrl: URL;
         const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-        const historyUrl = new URL(`${API_URL}/api/chat-history`);
-        historyUrl.searchParams.set("user_id", String(targetUserId));
-        historyUrl.searchParams.set("limit", "500");
-
+        if (isAdmin) {
+          // Admin fetches ALL chat history (no limit, or set a high limit)
+          historyUrl = new URL(`${API_URL}/api/chat-history/all`);
+          historyUrl.searchParams.set("limit", "10000");
+        } else {
+          // Regular users see their own chat history
+          const targetUserId = userId;
+          if (!targetUserId) {
+            setMessages([]);
+            return;
+          }
+          historyUrl = new URL(`${API_URL}/api/chat-history`);
+          historyUrl.searchParams.set("user_id", String(targetUserId));
+          historyUrl.searchParams.set("limit", "500");
+        }
         const response = await fetch(historyUrl.toString());
         if (!response.ok) throw new Error("Failed to fetch chat history");
-
         const data = (await response.json()) as ChatHistoryMessage[];
         setMessages(Array.isArray(data) ? data : []);
-      } catch {
+      } catch (error) {
         setMessages([]);
       } finally {
         setLoading(false);
@@ -231,7 +229,7 @@ const ChatHistoryPage = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <Navbar />
+      {/* <Navbar /> removed for admin chat history */}
       <main className="flex-1 container mx-auto p-4 md:p-8 animate-in fade-in duration-500">
         <div className="rounded-2xl border bg-card shadow-xl overflow-hidden p-4 min-h-[720px]">
           <div className="mb-6 flex items-center justify-between">
@@ -245,25 +243,8 @@ const ChatHistoryPage = () => {
             </div>
           </div>
 
-          {isAdmin && allUsers.length > 0 && (
-            <div className="mb-6 flex items-center gap-4 p-4 bg-muted/30 rounded-xl border">
-              <label className="text-sm font-medium text-foreground">Select User:</label>
-              <Select value={selectedUserId || ""} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="w-full md:w-80">
-                  <SelectValue placeholder="Select a user..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {allUsers.map((u) => (
-                    <SelectItem key={u.id} value={String(u.id)}>
-                      {u.first_name && u.last_name
-                        ? `${u.first_name} ${u.last_name} (${u.username || "No username"})`
-                        : u.username || `User ${u.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+
+          {/* No day tabs for admin, use collapsible per day like staff/student */}
 
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2 ml-auto">
@@ -308,6 +289,7 @@ const ChatHistoryPage = () => {
               </div>
             </AlertDialogContent>
           </AlertDialog>
+
 
           <div className="space-y-6">
             {groupedMessages.map(([dateKey, entries]) => (
@@ -362,7 +344,6 @@ const ChatHistoryPage = () => {
                 )}
               </div>
             ))}
-
             {groupedMessages.length === 0 && (
               <div className="text-center text-muted-foreground py-10">
                 No chat history yet.

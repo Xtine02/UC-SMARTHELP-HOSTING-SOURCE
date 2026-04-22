@@ -100,7 +100,7 @@ const FeedbackDialog = ({ open, onClose, departmentName, departmentId, onSuccess
 
         <div className="space-y-8">
           <div className="space-y-2 text-center">
-            <h2 className="text-2xl font-black text-foreground uppercase italic tracking-tight">{title}</h2>
+            <h2 className="text-2xl font-black text-foreground uppercase tracking-wide">{title}</h2>
             <p className="text-sm text-muted-foreground font-medium italic">Help us serve you better!</p>
           </div>
 

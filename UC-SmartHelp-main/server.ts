@@ -93,14 +93,13 @@ const createNotification = async (
   type: string,
   title: string,
   message?: string,
-  ticketId?: number,
-  announcementId?: number
+  ticketId?: number
 ) => {
   try {
-    console.log(`🔔 Creating notification: userId=${userId}, type=${type}, title=${title}, ticketId=${ticketId}, announcementId=${announcementId}`);
+    console.log(`🔔 Creating notification: userId=${userId}, type=${type}, title=${title}, ticketId=${ticketId}`);
     const [result] = await db.execute(
-      'INSERT INTO notifications (user_id, type, title, message, ticket_id, announcement_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, type, title, message || null, ticketId || null, announcementId || null]
+      'INSERT INTO notifications (user_id, type, title, message, ticket_id) VALUES (?, ?, ?, ?, ?)',
+      [userId, type, title, message || null, ticketId || null]
     );
     console.log(`✅ Notification created successfully, insertId:`, (result as any).insertId);
   } catch (error: unknown) {
@@ -416,44 +415,6 @@ const initializeDatabase = async () => {
       console.error("Error migrating chat_history table:", err);
     }
 
-    // Create/Migrate announcement table
-    try {
-      await connection.query(`
-        CREATE TABLE IF NOT EXISTS announcement (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          user_id INT,
-          role VARCHAR(50) NOT NULL,
-          audience VARCHAR(20) NOT NULL DEFAULT 'all',
-          department VARCHAR(100),
-          message TEXT NOT NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      const [announcementColumns] = await connection.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-      const announcementColumnNames = announcementColumns.map((c) => c.Field);
-      if (!announcementColumnNames.includes("user_id")) {
-        await connection.query("ALTER TABLE announcement ADD COLUMN user_id INT NULL");
-      }
-      if (!announcementColumnNames.includes("role")) {
-        await connection.query("ALTER TABLE announcement ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'staff'");
-      }
-      if (!announcementColumnNames.includes("audience")) {
-        await connection.query("ALTER TABLE announcement ADD COLUMN audience VARCHAR(20) NOT NULL DEFAULT 'all'");
-      }
-      if (!announcementColumnNames.includes("department")) {
-        await connection.query("ALTER TABLE announcement ADD COLUMN department VARCHAR(100) NULL");
-      }
-      if (!announcementColumnNames.includes("created_at")) {
-        await connection.query("ALTER TABLE announcement ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP");
-      }
-      if (announcementColumnNames.includes("posted_at")) {
-        await connection.query("ALTER TABLE announcement DROP COLUMN posted_at");
-      }
-    } catch (err: unknown) {
-      console.error("Error migrating announcement table:", err);
-    }
-
     // Create notification tables
     try {
       // Detect user primary key for foreign key references
@@ -469,7 +430,6 @@ const initializeDatabase = async () => {
           title VARCHAR(255) NOT NULL,
           message TEXT,
           ticket_id INT NULL,
-          announcement_id INT NULL,
           is_read TINYINT(1) DEFAULT 0,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           INDEX idx_user_id (user_id),
@@ -497,9 +457,6 @@ const initializeDatabase = async () => {
         }
         if (!notificationColumnNames.includes("ticket_id")) {
           alterClauses.push("ADD COLUMN ticket_id INT NULL");
-        }
-        if (!notificationColumnNames.includes("announcement_id")) {
-          alterClauses.push("ADD COLUMN announcement_id INT NULL");
         }
         if (!notificationColumnNames.includes("is_read")) {
           alterClauses.push("ADD COLUMN is_read TINYINT(1) DEFAULT 0");
@@ -532,13 +489,6 @@ const initializeDatabase = async () => {
         }
       } catch (notifSchemaError: unknown) {
         console.warn("Could not migrate notifications table schema:", notifSchemaError instanceof Error ? notifSchemaError.message : String(notifSchemaError));
-      }
-
-      // Remove legacy announcement_views table since announcement read tracking is no longer used
-      try {
-        await connection.query(`DROP TABLE IF EXISTS announcement_views`);
-      } catch (announcementViewsErr: unknown) {
-        console.warn("Could not drop legacy announcement_views table:", announcementViewsErr instanceof Error ? announcementViewsErr.message : String(announcementViewsErr));
       }
     } catch (err: unknown) {
       console.error("Error creating notification tables:", err);
@@ -878,8 +828,8 @@ app.get('/api/chat-history/all', async (req: Request, res: Response) => {
       return res.status(500).json({ error: "chat_history has no user_id column" });
     }
 
-    const { limit = "500" } = req.query;
-    const parsedLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
+    const { limit = "10000" } = req.query;
+    const parsedLimit = Math.max(1, Math.min(50000, Number(limit) || 10000));
 
     const selectParts = [
       idColumn ? `ch.${idColumn} AS id` : "NULL AS id",
@@ -889,15 +839,14 @@ app.get('/api/chat-history/all', async (req: Request, res: Response) => {
       createdAtColumn ? `ch.${createdAtColumn} AS created_at` : "NOW() AS created_at",
       "COALESCE(u.first_name, '') AS first_name",
       "COALESCE(u.last_name, '') AS last_name",
-      "COALESCE(u.username, '') AS username",
-      "COALESCE(u.user_name, '') AS user_name"
+      "COALESCE(u.username, '') AS username"
     ];
 
     const orderColumn = createdAtColumn || idColumn || messageColumn;
     const sql = `
       SELECT ${selectParts.join(", ")}
       FROM chat_history ch
-      LEFT JOIN users u ON ch.${userIdColumn} = u.id
+      LEFT JOIN users u ON ch.${userIdColumn} = u.user_id
       ORDER BY ch.${orderColumn} DESC
       LIMIT ${parsedLimit}
     `;
@@ -2418,7 +2367,7 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
       FROM tickets t
       LEFT JOIN ${RESPONSE_TABLE} tr ON t.${pkName} = tr.ticket_id
       LEFT JOIN users u ON t.user_id = u.${userPkName}
-      WHERE t.status NOT IN ('resolved', 'closed')
+      WHERE t.status NOT IN ('resolved', 'closed', 'unattended')
       GROUP BY t.${pkName}, t.user_id, t.subject, t.status, t.created_at, u.role
       HAVING (
         last_staff_response_date IS NULL
@@ -2497,9 +2446,7 @@ app.post('/api/check-overdue-tickets', async (req: Request, res: Response) => {
           admin.user_id,
           'overdue_tickets_detected',
           'Overdue tickets detected',
-          `${overdueTickets.length} ticket(s) are overdue and need attention`,
-          undefined,
-          undefined
+          `${overdueTickets.length} ticket(s) are overdue and need attention`
         );
       }
     }
@@ -3123,315 +3070,6 @@ app.get('/api/website-feedback', async (req: Request, res: Response) => {
   }
 });
 
-// Get all announcements
-app.get('/api/announcements', async (req: Request, res: Response) => {
-  try {
-    const viewerRole = (req.query.viewer_role || "guest").toString().trim().toLowerCase();
-    const viewerUserId = req.query.viewer_user_id ? parseInt(req.query.viewer_user_id.toString()) : null;
-    
-    console.log(`📢 Fetching announcements: viewerRole=${viewerRole}, viewerUserId=${viewerUserId}`);
-    
-    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-    const columnNames = columns.map((c) => c.Field);
-    const idColumn = columnNames.includes("announcement_id")
-      ? "announcement_id"
-      : columnNames.includes("id")
-      ? "id"
-      : "id";
-    const hasAudience = columnNames.includes("audience");
-    const hasRole = columnNames.includes("role");
-    const hasPostedAt = columnNames.includes("posted_at");
-    const hasCreatedAt = columnNames.includes("created_at");
-
-    let whereClause = "";
-    const params: (string | number)[] = [];
-    if (hasAudience) {
-      if (viewerRole === "admin") {
-        // Admins can see announcements addressed to all, staff, or admin, plus their own announcements
-        whereClause = "WHERE (a.audience IN ('all', 'staff', 'admin')";
-        if (viewerUserId) {
-          whereClause += " OR a.user_id = ?";
-          params.push(viewerUserId);
-        }
-        whereClause += ")";
-      } else if (viewerRole === "staff") {
-        // Staff can see announcements addressed to all or staff, plus their own announcements
-        whereClause = "WHERE (a.audience = 'all' OR a.audience = 'staff'";
-        if (viewerUserId) {
-          whereClause += " OR a.user_id = ?";
-          params.push(viewerUserId);
-        }
-        whereClause += ")";
-      } else if (viewerRole === "student") {
-        // Students can see announcements addressed to all or students
-        whereClause = "WHERE (a.audience = 'all' OR a.audience = 'students')";
-      } else {
-        // Guests can only see 'all' announcements
-        whereClause = "WHERE a.audience = 'all'";
-      }
-    }
-
-    console.log(`📢 WHERE clause: ${whereClause}, params:`, params);
-
-    const orderByClause = hasPostedAt
-      ? "ORDER BY a.posted_at DESC"
-      : hasCreatedAt
-      ? "ORDER BY a.created_at DESC"
-      : `ORDER BY a.${idColumn} DESC`;
-    
-    const query = `SELECT a.${idColumn} AS announcement_id, a.user_id, ${hasRole ? "a.role" : "'staff' AS role"}, ${columnNames.includes("department") ? "a.department" : "NULL AS department"}, ${hasAudience ? "a.audience" : "'all' as audience"}, a.message, 
-              ${hasCreatedAt ? 'DATE_FORMAT(a.created_at, "%Y-%m-%d %H:%i:%s")' : "NULL"} AS posted_at
-       FROM announcement a
-       ${whereClause}
-       ${orderByClause}`;
-    
-    console.log(`📢 Executing query: ${query}`);
-    console.log(`📢 Query params:`, params);
-    
-    const [rows] = await db.query<RowDataPacket[]>(query, params);
-    console.log(`📢 Query returned ${rows.length} announcements`);
-    rows.forEach(row => console.log(`   - ID: ${row.announcement_id}, user_id: ${row.user_id}, audience: ${row.audience}`));
-    res.json(rows);
-  } catch (error: unknown) {
-    console.error("Error fetching announcements:", error);
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    res.status(500).json({ error: "Failed to fetch announcements", details: errorMsg });
-  }
-});
-
-// Create announcement (staff/admin only)
-app.post('/api/announcements', async (req: Request, res: Response) => {
-  try {
-    const { user_id, role, audience, department, message } = req.body;
-
-    if (!user_id || !message) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    const [userCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM users");
-    const userColNames = userCols.map((c) => c.Field);
-    const userPk = userColNames.includes("user_id") ? "user_id" : "id";
-
-    const [userRows] = await db.query<RowDataPacket[]>(
-      `SELECT role FROM users WHERE ${userPk} = ? LIMIT 1`,
-      [user_id]
-    );
-
-    if (userRows.length === 0) {
-      return res.status(403).json({ error: "Invalid user" });
-    }
-
-    const actualRole = userRows[0].role?.toString().trim().toLowerCase();
-    if (!actualRole || !['staff', 'admin'].includes(actualRole)) {
-      return res.status(403).json({ error: "Only staff and admin can create announcements" });
-    }
-
-    const normalizedRole = actualRole;
-    let normalizedAudience = (audience || "").toString().trim().toLowerCase();
-    if (normalizedAudience === "student") {
-      normalizedAudience = "students";
-    }
-    const allowedAudience = ["all", "students", "staff", "admin"];
-    const finalAudience = allowedAudience.includes(normalizedAudience)
-      ? normalizedAudience
-      : normalizedRole === "admin"
-      ? "all"
-      : "students";
-
-    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-    const columnNames = columns.map((c) => c.Field);
-    const insertCols: string[] = [];
-    const placeholders: string[] = [];
-    const values: Array<string | number | null> = [];
-
-    if (columnNames.includes("user_id")) {
-      insertCols.push("user_id");
-      placeholders.push("?");
-      values.push(user_id || null);
-    }
-    if (columnNames.includes("role")) {
-      insertCols.push("role");
-      placeholders.push("?");
-      values.push(normalizedRole);
-    }
-    if (columnNames.includes("audience")) {
-      insertCols.push("audience");
-      placeholders.push("?");
-      values.push(finalAudience);
-    }
-    if (columnNames.includes("department")) {
-      insertCols.push("department");
-      placeholders.push("?");
-      values.push(department || null);
-    }
-    insertCols.push("message");
-    placeholders.push("?");
-    values.push(message);
-    if (columnNames.includes("created_at")) {
-      insertCols.push("created_at");
-      placeholders.push("NOW()");
-    }
-
-    const [result] = await db.query(
-      `INSERT INTO announcement (${insertCols.join(", ")}) VALUES (${placeholders.join(", ")})`,
-      values
-    );
-
-    // Create notifications for users based on audience (exclude the author)
-    try {
-      const announcementId = (result as any).insertId;
-      console.log(`📢 Creating notifications for announcement ${announcementId}, audience: ${finalAudience}`);
-      
-      let userQuery = 'SELECT user_id, role FROM users WHERE is_disabled = 0 AND user_id != ?';
-      const queryParams: any[] = [user_id]; // Exclude the author
-
-      if (finalAudience === 'students') {
-        userQuery += ' AND LOWER(role) = ?';
-        queryParams.push('student');
-      } else if (finalAudience === 'staff') {
-        // Send staff-targeted announcements to both staff and admin users
-        userQuery += ' AND LOWER(role) IN (?, ?)';
-        queryParams.push('staff', 'admin');
-      } else if (finalAudience === 'admin') {
-        // Send admin-targeted announcements to admin users only
-        userQuery += ' AND LOWER(role) = ?';
-        queryParams.push('admin');
-      }
-      // For 'all', no additional filter needed
-
-      console.log(`📢 User query: ${userQuery}, params:`, queryParams);
-      const [users] = await db.query<RowDataPacket[]>(userQuery, queryParams);
-      console.log(`📢 Found ${users.length} users to notify:`, users.map(u => ({ user_id: u.user_id, role: u.role })));
-      
-      // Create notifications for each user
-      for (const user of users) {
-        console.log(`📢 Creating notification for user ${user.user_id} (${user.role})`);
-        await createNotification(
-          user.user_id,
-          'announcement',
-          'New Announcement',
-          'A new announcement has been posted',
-          undefined, // ticket_id
-          announcementId // announcement_id
-        );
-        console.log(`✅ Notification created for user ${user.user_id}`);
-      }
-      
-      console.log(`📢 Created ${users.length} notifications for announcement ${announcementId}`);
-    } catch (notifError) {
-      console.error('❌ Error creating notifications for announcement:', notifError);
-      // Don't fail the announcement creation if notifications fail
-    }
-
-    res.status(201).json({
-      id: (result as any).insertId,
-      message: "Announcement created successfully"
-    });
-  } catch (error: unknown) {
-    console.error('Error creating announcement:', error);
-    res.status(500).json({ error: 'Error creating announcement', details: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-// Update announcement (admin/staff only, or announcement owner)
-app.patch('/api/announcements/:id', async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { user_id, role, message, audience } = req.body;
-
-    if (!role || !message) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    if (!['staff', 'admin'].includes(String(role).toLowerCase())) {
-      return res.status(403).json({ error: "Only staff and admin can edit announcements" });
-    }
-
-    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-    const columnNames = columns.map((c) => c.Field);
-    const idColumn = columnNames.includes("announcement_id") ? "announcement_id" : "id";
-
-    const [existingRows] = await db.query<RowDataPacket[]>(
-      `SELECT ${idColumn} as announcement_id, ${columnNames.includes("user_id") ? "user_id" : "NULL as user_id"} FROM announcement WHERE ${idColumn} = ? LIMIT 1`,
-      [id]
-    );
-    if (!existingRows.length) {
-      return res.status(404).json({ error: "Announcement not found" });
-    }
-
-    const existingRow = existingRows[0] as any;
-    if (existingRow.user_id && user_id && existingRow.user_id !== user_id) {
-      return res.status(403).json({ error: "You can only edit your own announcements" });
-    }
-
-    const normalizedRole = String(role).toLowerCase();
-    const normalizedAudience = (audience || "").toString().trim().toLowerCase();
-    const allowedAudience = ["all", "students", "staff"];
-    const finalAudience = normalizedRole === "admin"
-      ? (allowedAudience.includes(normalizedAudience) ? normalizedAudience : "all")
-      : "students";
-
-    const updates: string[] = ["message = ?"];
-    const values: Array<string | number> = [String(message).trim()];
-
-    if (columnNames.includes("role")) {
-      updates.push("role = ?");
-      values.push(normalizedRole);
-    }
-    if (columnNames.includes("audience")) {
-      updates.push("audience = ?");
-      values.push(finalAudience);
-    }
-    if (columnNames.includes("created_at")) {
-      updates.push("created_at = NOW()");
-    }
-
-    values.push(id);
-    await db.query(`UPDATE announcement SET ${updates.join(", ")} WHERE ${idColumn} = ?`, values);
-    res.json({ message: "Announcement updated successfully" });
-  } catch (error: unknown) {
-    console.error("Error updating announcement:", error);
-    res.status(500).json({ error: "Error updating announcement", details: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-// Delete announcement (admin/staff only, or announcement owner)
-app.delete('/api/announcements/:id', async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { user_id, role } = req.body;
-
-    if (!role) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    if (!['staff', 'admin'].includes(String(role).toLowerCase())) {
-      return res.status(403).json({ error: "Only staff and admin can delete announcements" });
-    }
-
-    const [columns] = await db.query<DBColumn[]>("SHOW COLUMNS FROM announcement");
-    const columnNames = columns.map((c) => c.Field);
-    const idColumn = columnNames.includes("announcement_id") ? "announcement_id" : "id";
-
-    const [existingRows] = await db.query<RowDataPacket[]>(
-      `SELECT ${idColumn} as announcement_id, ${columnNames.includes("user_id") ? "user_id" : "NULL as user_id"} FROM announcement WHERE ${idColumn} = ? LIMIT 1`,
-      [id]
-    );
-    if (!existingRows.length) {
-      return res.status(404).json({ error: "Announcement not found" });
-    }
-
-    const existingRow = existingRows[0] as any;
-    if (existingRow.user_id && user_id && existingRow.user_id !== user_id) {
-      return res.status(403).json({ error: "You can only delete your own announcements" });
-    }
-
-    await db.query(`DELETE FROM announcement WHERE ${idColumn} = ?`, [id]);
-    res.json({ message: "Announcement deleted successfully" });
-  } catch (error: unknown) {
-    console.error("Error deleting announcement:", error);
-    res.status(500).json({ error: "Error deleting announcement", details: error instanceof Error ? error.message : String(error) });
-  }
-});
-
 // Notification endpoints
 app.get('/api/notifications/unread-count', async (req: Request, res: Response) => {
   const user_id = normalizeUserId(req.query.user_id ?? req.query.userId ?? req.query.id);
@@ -3462,7 +3100,7 @@ app.get('/api/notifications', async (req: Request, res: Response) => {
 
   try {
     const [notifications] = await db.query<RowDataPacket[]>(
-      `SELECT ${NOTIFICATION_PK_NAME} AS id, user_id, type, title, message, ticket_id, announcement_id, is_read, created_at
+      `SELECT ${NOTIFICATION_PK_NAME} AS id, user_id, type, title, message, ticket_id, is_read, created_at
        FROM notifications
        WHERE user_id = ?
        ORDER BY created_at DESC`,
@@ -3604,7 +3242,7 @@ const checkOverdueTickets = async () => {
       FROM tickets t
       LEFT JOIN ${RESPONSE_TABLE} tr ON t.${ticketPkName} = tr.ticket_id
       LEFT JOIN users u ON t.user_id = u.${userPkName}
-      WHERE t.status NOT IN ('resolved', 'closed')
+      WHERE LOWER(t.status) NOT IN ('resolved', 'closed', 'unattended')
       GROUP BY t.${ticketPkName}, t.user_id, t.subject, t.status, t.created_at, t.department, u.role
       HAVING (
         last_staff_response_date IS NULL
@@ -3624,6 +3262,10 @@ const checkOverdueTickets = async () => {
     console.log(`Found ${overdueTickets.length} overdue tickets`);
     if (overdueTickets.length > 0) {
       console.log('Overdue tickets:', overdueTickets.map(t => ({id: t.id, subject: t.subject, status: t.status, created_at: t.created_at})));
+    } else {
+      console.log('No overdue tickets found - should not send any notifications');
+      // Early exit if no overdue tickets
+      return;
     }
 
     let notificationsCreated = 0;
@@ -3640,6 +3282,12 @@ const checkOverdueTickets = async () => {
       const createdAt = new Date(ticket.created_at);
 
       console.log(`Processing ticket ${ticketId}: role=${userRole}, userId=${userId}, status=${ticket.status}`);
+
+      // Skip all processing if ticket is already unattended
+      if (ticket.status && ticket.status.toLowerCase() === 'unattended') {
+        console.log(`Ticket ${ticketId} is already unattended, skipping all processing`);
+        continue;
+      }
 
       const overdueReference = lastStudentResponseDate && lastStudentResponseDate > createdAt
         ? lastStudentResponseDate
@@ -3680,6 +3328,20 @@ const checkOverdueTickets = async () => {
           }
         }
 
+        // Check current ticket status in database to ensure it's not already unattended
+        const [currentTicketStatus] = await db.query<RowDataPacket[]>(`
+          SELECT status FROM tickets WHERE ${ticketPkName} = ?
+        `, [ticketId]);
+
+        const dbStatus = currentTicketStatus[0]?.status?.toLowerCase();
+        console.log(`Ticket ${ticketId}: dbStatus=${dbStatus}, memoryStatus=${ticket.status}`);
+
+        // Skip if ticket is already unattended in database
+        if (dbStatus && dbStatus.toLowerCase() === 'unattended') {
+          console.log(`Ticket ${ticketId} is already unattended in database, skipping notifications`);
+          continue;
+        }
+
         // Check if we already notified about this ticket today to avoid spam
         const [existingNotifications] = await db.query<RowDataPacket[]>(`
           SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
@@ -3689,6 +3351,7 @@ const checkOverdueTickets = async () => {
 
         console.log(`Ticket ${ticketId}: existingNotifications=${existingNotifications.length}`);
 
+        // Only send notifications if no existing notifications
         if (existingNotifications.length === 0) {
           // Notify students about their overdue tickets
           if (userRole === 'student') {
@@ -3740,10 +3403,16 @@ const checkOverdueTickets = async () => {
           }
         }
 
-        // Auto-resolve ticket after overdue threshold
+        // Auto-resolve ticket after overdue threshold (only once per ticket)
         if (minutesSinceReference >= OVERDUE_TICKET_DEMO_MINUTES) {
-          // Check if already resolved or unattended
-          if (ticket.status !== 'resolved' && ticket.status !== 'closed' && ticket.status !== 'unattended') {
+          // Check if already resolved or unattended - if already unattended, skip everything
+          if (ticket.status && ticket.status.toLowerCase() === 'unattended') {
+            console.log(`Ticket ${ticketId} is already unattended, skipping status update and notifications`);
+            continue; // Skip to next ticket
+          }
+          
+          // Check if already resolved or closed
+          if (ticket.status !== 'resolved' && ticket.status !== 'closed') {
             try {
               await db.execute(
                 `UPDATE tickets SET status = 'Unattended', closed_at = CURRENT_TIMESTAMP WHERE ${ticketPkName} = ?`,
@@ -3751,6 +3420,9 @@ const checkOverdueTickets = async () => {
               );
               ticketsAutoResolved++;
               console.log(`Auto-marked ticket ${ticketId} as Unattended due to inactivity`);
+              
+              // Update ticket status in memory to prevent further notifications
+              ticket.status = 'unattended';
             } catch (error) {
               console.error(`Error auto-marking ticket ${ticketId} as unattended:`, error);
             }
@@ -3760,7 +3432,9 @@ const checkOverdueTickets = async () => {
     }
 
     // Also notify admins about any overdue tickets in the system (once per day)
+    console.log(`Admin notification check: overdueTickets.length = ${overdueTickets.length}`);
     if (overdueTickets.length > 0) {
+      console.log('Proceeding with admin notifications for overdue tickets');
       const [existingAdminNotifications] = await db.query<RowDataPacket[]>(`
         SELECT ${NOTIFICATION_PK_NAME} AS id FROM notifications 
         WHERE type = 'overdue_tickets_detected' 
@@ -3769,6 +3443,7 @@ const checkOverdueTickets = async () => {
       `);
 
       if (existingAdminNotifications.length === 0) {
+        console.log('No existing admin notifications found, creating new ones');
         const userPkName = await getUserPkName();
         const [adminUsers] = await db.query<RowDataPacket[]>(
           `SELECT ${userPkName} AS user_id FROM users WHERE role = 'admin'`
@@ -3784,7 +3459,11 @@ const checkOverdueTickets = async () => {
             undefined
           );
         }
+      } else {
+        console.log('Admin notifications already sent today, skipping');
       }
+    } else {
+      console.log('No overdue tickets found, skipping admin notifications');
     }
 
     if (notificationsCreated > 0 || ticketsAutoResolved > 0) {

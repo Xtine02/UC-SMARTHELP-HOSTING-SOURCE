@@ -211,7 +211,7 @@ const Login = () => {
             <X className="h-6 w-6" />
           </button>
           
-          <h2 className="text-center text-3xl font-bold text-white uppercase italic tracking-widest">Login</h2>
+          <h2 className="text-center text-3xl font-bold text-white uppercase tracking-wide">Login</h2>
 
           <form onSubmit={handleLogin} className="space-y-5">
             <div className="space-y-1">
