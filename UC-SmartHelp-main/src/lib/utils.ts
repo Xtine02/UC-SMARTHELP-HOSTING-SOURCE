@@ -112,6 +112,9 @@ export async function performLogout() {
     });
   }
   
+  // Small delay to show loading state before redirect
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
   // Reload page to home immediately.
   window.location.href = "/";
 }

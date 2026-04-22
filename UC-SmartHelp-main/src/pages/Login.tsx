@@ -164,7 +164,13 @@ const Login = () => {
 
         navigate(getRedirectPath(userData));
       } else {
-        throw new Error(data.error || "Invalid credentials");
+        // Explicitly handle 429 for lockout message
+        if (response.status === 429) {
+          throw new Error("Too many failed login attempts. Your account has been temporarily locked for 2 minutes. Please try again later.");
+        } else {
+          // Standard failure message
+          throw new Error(data.error || "Invalid Credentials");
+        }
       }
     } catch (error: any) {
       toast({ 

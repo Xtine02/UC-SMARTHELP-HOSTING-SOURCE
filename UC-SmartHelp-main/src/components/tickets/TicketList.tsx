@@ -374,8 +374,8 @@ const TicketList = ({ departmentFilter, ticketIdFromRoute }: Props) => {
     setSelectedTicket(null);
     fetchTickets();
 
-    // Show feedback dialog for resolved tickets (student only, not guest)
-    if (!isStaffOrAdmin && closedTicket?.status === "resolved" && !isGuest) {
+    // Show feedback dialog when ticket is resolved or unattended (student only, not guest)
+    if (!isStaffOrAdmin && (closedTicket?.status === "resolved" || closedTicket?.status === "unattended") && !isGuest) {
       setFeedbackTicket(closedTicket);
       setShowFeedback(true);
     }

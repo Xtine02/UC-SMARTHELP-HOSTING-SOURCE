@@ -27,7 +27,7 @@ const db = mysql.createPool({
   database: process.env.DB_NAME || 'uc_smarthelp',
 });
 
-const OVERDUE_TICKET_DEMO_MINUTES = 1; // demo threshold only
+const OVERDUE_TICKET_DEMO_MINUTES = 5; // demo threshold only
 const OVERDUE_WARNING_MINUTES = 40; // warn staff after 40 minutes unattended
 const OVERDUE_TICKET_TEXT = '5 days'; // preserve user-facing wording
 const OVERDUE_CHECK_INTERVAL_MS = 1 * 60 * 1000; // every minute for demo
@@ -236,6 +236,21 @@ const initializeDatabase = async () => {
       await connection.query("ALTER TABLE departments CHANGE id department_id INT AUTO_INCREMENT PRIMARY KEY");
     }
 
+    // Check if departments table is empty or incomplete, and repopulate if needed
+    // Always repopulate departments to ensure consistency and prevent duplicates
+    await connection.query("DELETE FROM departments");
+    await connection.query(`
+      INSERT INTO departments (department_id, name) VALUES 
+        (1, "Registrar's Office"),
+        (2, "Accounting Office"),
+        (3, "Clinic"),
+        (4, "CCS Office"),
+        (5, "Cashier's Office"),
+        (6, "SAO"),
+        (7, "Scholarship")
+    `);
+
+    // Ensure departments table is populated with at least the core departments
     // Check if departments table is empty or incomplete, and repopulate if needed
     const [existingDepts] = await connection.query<RowDataPacket[]>("SELECT COUNT(*) as count FROM departments");
     const deptCount = existingDepts[0]?.count || 0;
@@ -617,97 +632,87 @@ app.post('/api/register', async (req: Request, res: Response) => {
 });
 
 app.post('/api/login', async (req: Request, res: Response) => {
-const { username, password } = req.body;
-try {
-  const normalizedUsername = String(username || "").toLowerCase().trim();
-  if (!normalizedUsername || !password) {
-    return res.status(400).json({ error: "Username and password are required" });
-  }
-
-  const [lockRows] = await db.query<RowDataPacket[]>(
-    'SELECT failed_count, locked_until FROM login_attempts WHERE username = ? LIMIT 1',
-    [normalizedUsername]
-  );
-  const lockRow = lockRows[0];
-  const now = Date.now();
-  const lockedUntilMs = lockRow?.locked_until ? new Date(lockRow.locked_until).getTime() : 0;
-  if (lockedUntilMs && lockedUntilMs > now) {
-    return res.status(429).json({ error: "too many attempts try again after 2 minutes" });
-  }
-
-  const [rows] = await db.query<RowDataPacket[]>('SELECT * FROM users WHERE LOWER(TRIM(username)) = ? LIMIT 1', [normalizedUsername]);
-  const user = rows[0];
-  console.log('Login attempt for user:', user.username, 'password starts with:', user.password ? user.password.substring(0, 10) : 'no password');
-  
-  if (!user) {
-    const nextFailed = Number(lockRow?.failed_count || 0) + 1;
-    const shouldLock = nextFailed >= 3;
-    await db.query(
-      `INSERT INTO login_attempts (username, failed_count, locked_until)
-       VALUES (?, ?, ${shouldLock ? "DATE_ADD(NOW(), INTERVAL 2 MINUTE)" : "NULL"})
-       ON DUPLICATE KEY UPDATE
-         failed_count = VALUES(failed_count),
-         locked_until = VALUES(locked_until)`,
-      [normalizedUsername, shouldLock ? 0 : nextFailed]
-    );
-    if (shouldLock) {
-      return res.status(429).json({ error: "too many attempts try again after 2 minutes" });
+  const { username, password } = req.body;
+  try {
+    const normalizedUsername = String(username || "").toLowerCase().trim();
+    if (!normalizedUsername || !password) {
+      return res.status(401).json({ error: "Invalid Credentials" });
     }
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
 
-  if (Number(user.is_disabled) === 1) {
-    console.log('Account disabled for user:', user.username);
-    return res.status(403).json({ error: "Account disabled" });
-  }
-
-  let isMatch = false;
-  // Try bcrypt first
-  if (user.password && user.password.startsWith('$2')) {
-    try {
-      isMatch = await bcrypt.compare(password, user.password);
-      console.log('Bcrypt compare result for user', user.username, ':', isMatch);
-    } catch (e: unknown) {
-      console.log('Bcrypt compare failed for user', user.username, ':', e);
-      // Fallback to plain text comparison handled below
-    }
-  }
-
-  // Fallback to plain text comparison
-  if (!isMatch) {
-    isMatch = (password === user.password);
-    if (isMatch) console.log('Plain text match for user', user.username);
-  }
-
-  if (isMatch) {
-    await db.query(
-      'DELETE FROM login_attempts WHERE username = ?',
+    // 1. Check if account is currently locked
+    const [lockRows] = await db.query<RowDataPacket[]>(
+      'SELECT failed_count, locked_until FROM login_attempts WHERE username = ? LIMIT 1',
       [normalizedUsername]
     );
-    // Log successful login - handle both 'id' and 'user_id' column names
-    const userId = user.id ?? user.user_id;
-    await logAudit(req, userId, 'User logged in', 'user', userId.toString());
-
-    res.json(formatUserResponse(user as User));
-  } else {
-    const nextFailed = Number(lockRow?.failed_count || 0) + 1;
-    const shouldLock = nextFailed >= 3;
-    await db.query(
-      `INSERT INTO login_attempts (username, failed_count, locked_until)
-       VALUES (?, ?, ${shouldLock ? "DATE_ADD(NOW(), INTERVAL 2 MINUTE)" : "NULL"})
-       ON DUPLICATE KEY UPDATE
-         failed_count = VALUES(failed_count),
-         locked_until = VALUES(locked_until)`,
-      [normalizedEmail, shouldLock ? 0 : nextFailed]
-    );
-    if (shouldLock) {
-      return res.status(429).json({ error: "too many attempts try again after 2 minutes" });
+    const lockRow = lockRows[0];
+    const now = new Date();
+    
+    if (lockRow?.locked_until) {
+      const lockedUntil = new Date(lockRow.locked_until);
+      if (lockedUntil > now) {
+        return res.status(429).json({ error: "Too many failed login attempts. Your account has been temporarily locked for 2 minutes. Please try again later." });
+      }
     }
-    res.status(401).json({ error: "Invalid credentials" });
+
+    // 2. Look up the user
+    const [rows] = await db.query<RowDataPacket[]>(
+      'SELECT * FROM users WHERE LOWER(TRIM(username)) = ? LIMIT 1', 
+      [normalizedUsername]
+    );
+    const user = rows[0];
+    
+    // Helper to handle failed attempts
+    const registerFailedAttempt = async () => {
+      const nextFailed = (lockRow?.failed_count || 0) + 1;
+      const shouldLock = nextFailed >= 3;
+      await db.query(
+        `INSERT INTO login_attempts (username, failed_count, locked_until)
+         VALUES (?, ?, ${shouldLock ? "DATE_ADD(NOW(), INTERVAL 2 MINUTE)" : "NULL"})
+         ON DUPLICATE KEY UPDATE
+           failed_count = VALUES(failed_count),
+           locked_until = VALUES(locked_until)`,
+        [normalizedUsername, shouldLock ? 0 : nextFailed]
+      );
+    };
+
+    if (!user) {
+      await registerFailedAttempt();
+      return res.status(401).json({ error: "Invalid Credentials" });
+    }
+
+    if (Number(user.is_disabled) === 1) {
+      return res.status(403).json({ error: "Account disabled" });
+    }
+
+    // 3. Verify password
+    let isMatch = false;
+    if (user.password && user.password.startsWith('$2')) {
+      try {
+        isMatch = await bcrypt.compare(password, user.password);
+      } catch (e) {
+        isMatch = false;
+      }
+    }
+
+    if (!isMatch) {
+      isMatch = (password === user.password);
+    }
+
+    if (isMatch) {
+      // Clear attempts on successful login
+      await db.query('DELETE FROM login_attempts WHERE username = ?', [normalizedUsername]);
+      
+      const userId = user.id ?? user.user_id;
+      await logAudit(req, userId, 'User logged in', 'user', userId.toString());
+      res.json(formatUserResponse(user as User));
+    } else {
+      await registerFailedAttempt();
+      res.status(401).json({ error: "Invalid Credentials" });
+    }
+  } catch (error: unknown) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: "Invalid Credentials" });
   }
-} catch (error: unknown) {
-  res.status(500).json({ error: "Login error" });
-}
 });
 
 // Logout endpoint with audit logging
@@ -1798,6 +1803,8 @@ try {
   
   const [rows] = await db.query<RowDataPacket[]>(query, params);
   
+  console.log("DEBUG: Raw tickets fetched from DB:", rows.map(r => ({ id: r.ticket_id || r.id, status: r.status })));
+  
   const normalizedRows = rows.map((r) => {
     const normalizedStatus = r.status
       ?.toString()
@@ -1919,7 +1926,37 @@ app.post('/api/tickets/:id/responses', async (req: Request, res: Response) => {
 
     const role = (userRows[0].role || 'student').toLowerCase();
     const isStudent = role === 'student';
+    const isStaff = role === 'staff';
+    const isAdmin = role === 'admin';
     const userRow = userRows[0];
+
+    console.log(`DEBUG: Processing reply from user ${user_id} with role: '${role}' for ticket ${id}`);
+
+    // RESTRICTION: Only students and staff can reply to tickets.
+    // Admins are restricted to forwarding tickets (handled separately).
+    if (isAdmin) {
+      return res.status(403).json({ error: "Admins are not permitted to reply to tickets." });
+    }
+
+    // Auto-transition: If staff replies to an unattended ticket, move to in-progress
+    if (isStaff) {
+      const [ticketCols] = await db.query<DBColumn[]>("SHOW COLUMNS FROM tickets");
+      const ticketPk = ticketCols.find((c) => c.Field.toLowerCase() === 'id' || c.Field.toLowerCase() === 'ticket_id')?.Field || 'id';
+
+      const [currentTicket] = await db.query<RowDataPacket[]>(`SELECT status FROM tickets WHERE ${ticketPk} = ?`, [id]);
+      const currentStatus = currentTicket.length > 0 ? (currentTicket[0].status || '').toString().toLowerCase().trim() : '';
+      
+      console.log(`DEBUG: Staff reply to ticket ${id}. Current DB status: '${currentStatus}'`);
+      
+      if (currentStatus === 'unattended') {
+        console.log(`DEBUG: Transitioning ticket ${id} from 'unattended' to 'in_progress'`);
+        const [updateResult] = await db.execute(`UPDATE tickets SET status = ?, staff_acknowledge_at = CURRENT_TIMESTAMP WHERE ${ticketPk} = ?`, ['in_progress', id]);
+        console.log(`DEBUG: Update result for ticket ${id}: affectedRows=${updateResult.affectedRows}`);
+      } else if (currentStatus === 'resolved' || currentStatus === 'closed') {
+         console.log(`DEBUG: Transitioning ticket ${id} from '${currentStatus}' to 'Reopened'`);
+         await db.execute(`UPDATE tickets SET status = ?, reopen_at = CURRENT_TIMESTAMP WHERE ${ticketPk} = ?`, ['Reopened', id]);
+      }
+    }
 
     // Auto reopen logic: If student replies and ticket is resolved, change to reopened
     if (isStudent) {

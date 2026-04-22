@@ -138,12 +138,11 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
         }
         onReplySuccess?.();
         
-        // Show feedback dialog when ticket is marked as resolved by staff
-        if (newStatus.toLowerCase() === "resolved" && isAdminOrStaff) {
+        // Show feedback dialog when ticket is marked as resolved or unattended by staff
+        if ((newStatus.toLowerCase() === "resolved" || newStatus.toLowerCase() === "unattended") && isAdminOrStaff) {
           setShowFeedback(true);
           setShowDepartmentFeedback(true);
-        }
-        
+        }        
         fetchMessages();
       } else {
         const errorData = await response.json();
@@ -303,8 +302,8 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
 
         // Logic for auto-status transition on reply:
         if (isStaffUser) {
-          // If staff replies to a pending or reopened ticket, move it to in_progress
-          if (currentStatus?.toLowerCase() === "pending" || currentStatus?.toLowerCase() === "reopened") {
+          // If staff replies to a pending, unattended, or reopened ticket, move it to in_progress
+          if (["pending", "reopened", "unattended"].includes(currentStatus?.toLowerCase())) {
             await handleStatusChange("in_progress");
           }
         } else {
@@ -376,6 +375,8 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
       ? "Resolved/Closed"
       : currentStatus?.toLowerCase() === "reopened"
       ? "Reopened"
+      : currentStatus?.toLowerCase() === "unattended"
+      ? "Unattended"
       : "Pending";
 
   return (
@@ -433,6 +434,7 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
             currentStatus?.toLowerCase() === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
             (currentStatus?.toLowerCase() === "resolved" || currentStatus?.toLowerCase() === "closed") ? "bg-green-50 text-green-700 border-green-200" :
             currentStatus?.toLowerCase() === "reopened" ? "bg-pink-50 text-pink-700 border-pink-200" :
+            currentStatus?.toLowerCase() === "unattended" ? "bg-red-50 text-red-700 border-red-200" :
             "bg-gray-50 text-gray-700 border-gray-200"
           }`}>
             Status: {displayStatus}
@@ -583,6 +585,15 @@ const TicketDetailModal = ({ ticket, onClose, isStaff = false, onFeedbackSuccess
                       className="w-full py-8 text-xl font-black rounded-2xl shadow-xl hover:scale-[1.01] active:scale-[0.99] transition-all bg-orange-500 hover:bg-orange-600 text-white uppercase italic"
                     >
                       REOPEN THIS TICKET
+                    </Button>
+                  ) : currentStatus?.toLowerCase() === "unattended" ? (
+                    <Button
+                      onClick={() => {
+                        setShowDepartmentFeedback(true);
+                      }}
+                      className="w-full py-8 text-xl font-black rounded-2xl shadow-xl hover:scale-[1.01] active:scale-[0.99] transition-all bg-orange-500 hover:bg-orange-600 text-white uppercase italic"
+                    >
+                      CLOSE TICKET
                     </Button>
                   ) : (
                     <Button onClick={() => setShowReplyBox(true)} className="w-full py-8 text-xl font-black rounded-2xl shadow-xl hover:scale-[1.01] active:scale-[0.99] transition-all uc-gradient-btn text-white">
