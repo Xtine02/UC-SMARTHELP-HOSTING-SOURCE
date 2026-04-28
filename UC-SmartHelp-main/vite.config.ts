@@ -1,23 +1,7 @@
 import { defineConfig } from "vite";
 import path from "path";
 
-let reactPlugin;
-try {
-  reactPlugin = require("@vitejs/plugin-react-swc");
-} catch (error) {
-  console.warn("React SWC plugin not found, using fallback");
-  reactPlugin = null;
-}
-
-let componentTaggerPlugin;
-try {
-  componentTaggerPlugin = require("lovable-tagger").componentTagger;
-} catch (error) {
-  console.warn("Lovable tagger not found, using fallback");
-  componentTaggerPlugin = null;
-}
-
-// https://vitejs.dev/config/
+// Simple config without external plugins for build reliability
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
@@ -29,10 +13,16 @@ export default defineConfig(({ mode }) => ({
   preview: {
     allowedHosts: true,
   },
-  plugins: [reactPlugin?.(), mode === "development" && componentTaggerPlugin?.()].filter(Boolean),
+  plugins: [],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+    minify: 'terser',
   },
 }));
