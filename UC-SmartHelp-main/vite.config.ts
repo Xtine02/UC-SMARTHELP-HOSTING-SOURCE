@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   preview: {
-    allowedHosts: ['all'],
+    allowedHosts: true,
   },
   plugins: [reactPlugin?.(), mode === "development" && componentTaggerPlugin?.()].filter(Boolean),
   resolve: {
