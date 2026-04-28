@@ -2,7 +2,7 @@ services:
   - type: web
     name: uc-smarthelp-frontend
     buildCommand: bash build.sh
-    startCommand: cd UC-SmartHelp-main && npm start
+    startCommand: cd UC-SmartHelp-main && npm run server
     envVars:
       - key: NODE_ENV
         value: production

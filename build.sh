@@ -3,7 +3,7 @@ set -e
 
 echo "==> Installing dependencies..."
 cd UC-SmartHelp-main
-npm install
+npm install --production=false
 
 echo "==> Building application..."
 npm run build
