@@ -2,6 +2,6 @@ services:
   - type: web
     name: uc-smarthelp
     env: node
-    buildCommand: npm install && npm run build
-    startCommand: npm start
+    buildCommand: cd UC-SmartHelp-main && npm install && npm run build
+    startCommand: cd UC-SmartHelp-main && npm start
     staticPublishPath: ./UC-SmartHelp-main/dist
