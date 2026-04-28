@@ -2,11 +2,34 @@ import { createServer } from 'http';
 import { readFile, access } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { build } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const port = process.env.PORT || 10000;
 const distPath = join(__dirname, 'dist');
+
+// Auto-build if dist doesn't exist
+async function ensureBuild() {
+  try {
+    await access(distPath);
+    console.log('✅ Dist directory found');
+  } catch (error) {
+    console.log('📦 Building project...');
+    try {
+      await build({
+        configFile: './vite.config.ts',
+        mode: 'production'
+      });
+      console.log('✅ Build complete');
+    } catch (buildError) {
+      console.error('❌ Build failed:', buildError.message);
+      process.exit(1);
+    }
+  }
+}
+
+await ensureBuild();
 
 const server = createServer(async (req, res) => {
   console.log(`Request: ${req.method} ${req.url}`);
