@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "tsx server.ts",
+    "server": "node static-server.js",
     "build": "node build.js",
     "build:dev": "node -e \"import('./build.js').then(m => m.default({ mode: 'development' }))\"",
     "start": "node static-server.js",
