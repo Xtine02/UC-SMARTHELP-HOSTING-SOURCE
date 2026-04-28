@@ -26,6 +26,9 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
+  preview: {
+    allowedHosts: ['all'],
+  },
   plugins: [reactPlugin?.(), mode === "development" && componentTaggerPlugin?.()].filter(Boolean),
   resolve: {
     alias: {
