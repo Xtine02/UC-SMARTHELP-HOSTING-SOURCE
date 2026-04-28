@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
-// Simple config without external plugins for build reliability
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => ({
   preview: {
     allowedHosts: true,
   },
-  plugins: [],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -23,6 +23,6 @@ export default defineConfig(({ mode }) => ({
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: false,
-    minify: 'terser',
+    minify: 'esbuild',
   },
 }));
