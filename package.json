@@ -4,7 +4,7 @@
     "dev": "npm --prefix ./UC-SmartHelp-main run dev",
     "server": "npm --prefix ./UC-SmartHelp-main run server",
     "install:inner": "npm --prefix ./UC-SmartHelp-main install",
-    "start": "npm run dev"
+    "start": "npm --prefix ./UC-SmartHelp-main run start"
   },
   "devDependencies": {
     "vit": "^0.1.0",
