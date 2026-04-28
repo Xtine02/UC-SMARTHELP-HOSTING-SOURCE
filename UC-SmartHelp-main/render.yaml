@@ -1,7 +1,7 @@
 services:
   - type: web
     name: uc-smarthelp
-    buildCommand: cd UC-SmartHelp-main && rm -rf node_modules package-lock.json && yarn install && yarn run build && ls -la dist
+    buildCommand: cd UC-SmartHelp-main && rm -rf node_modules package-lock.json && yarn install && yarn run vite build --mode production && ls -la dist
     startCommand: cd UC-SmartHelp-main && yarn start
     envVars:
       - key: NODE_ENV
