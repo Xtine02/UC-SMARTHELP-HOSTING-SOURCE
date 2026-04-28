@@ -8,8 +8,9 @@ cd UC-SmartHelp-main
 rm -rf node_modules package-lock.json
 npm cache clean --force
 
-# Install dependencies fresh
-npm install --production=false
+# Install dependencies WITHOUT running postinstall script to avoid build errors
+echo "Installing packages (skipping postinstall)..."
+npm install --production=false --ignore-scripts
 
 echo "==> Building application..."
 npm run build
