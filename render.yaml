@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: uc-smarthelp
+    name: uc-smarthelp-frontend
     buildCommand: bash build.sh
     startCommand: cd UC-SmartHelp-main && npm start
     envVars:
