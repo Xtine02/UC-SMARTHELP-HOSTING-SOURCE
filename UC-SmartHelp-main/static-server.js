@@ -2,47 +2,25 @@ import { createServer } from 'http';
 import { readFile, access } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const port = process.env.PORT || 10000;
 const distPath = join(__dirname, 'dist');
-let attemptedAutoBuild = false;
-
-const ensureDistExists = async () => {
-  try {
-    await access(distPath);
-    return true;
-  } catch {
-    if (!attemptedAutoBuild) {
-      attemptedAutoBuild = true;
-      console.log('Dist directory missing. Running one-time build...');
-      try {
-        execSync('npm run build', { stdio: 'inherit', cwd: __dirname });
-        await access(distPath);
-        console.log('Build completed and dist directory is now available.');
-        return true;
-      } catch (buildError) {
-        console.error('Auto-build failed:', buildError);
-      }
-    }
-    return false;
-  }
-};
 
 const server = createServer(async (req, res) => {
   console.log(`Request: ${req.method} ${req.url}`);
   
   try {
-    // Check if dist directory exists (auto-build once if missing)
-    const hasDist = await ensureDistExists();
-    if (!hasDist) {
+    // Check if dist directory exists
+    try {
+      await access(distPath);
+    } catch (error) {
       console.error('Dist directory not found');
       res.writeHead(500, { 'Content-Type': 'text/html' });
-      res.end('<h1>Build Error: dist directory not found</h1><p>Build failed. Check deploy logs for npm run build output.</p>');
+      res.end('<h1>Build Error: dist directory not found</h1><p>Please run npm run build first</p>');
       return;
-    }    
+    }
     
     let filePath = join(distPath, req.url === '/' ? 'index.html' : req.url);
     
