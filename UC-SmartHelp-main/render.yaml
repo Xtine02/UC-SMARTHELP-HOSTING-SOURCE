@@ -1,8 +1,8 @@
 services:
   - type: web
     name: uc-smarthelp
-    buildCommand: cd UC-SmartHelp-main && rm -rf node_modules package-lock.json && yarn install && yarn run vite build --mode production && ls -la dist
-    startCommand: cd UC-SmartHelp-main && yarn start
+    buildCommand: rm -rf node_modules package-lock.json && npm cache clean --force && npm install --production=false --ignore-scripts && npm run build
+    startCommand: npm run server
     envVars:
       - key: NODE_ENV
         value: production
