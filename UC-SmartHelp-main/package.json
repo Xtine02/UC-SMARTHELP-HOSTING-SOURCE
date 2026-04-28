@@ -8,7 +8,7 @@
     "server": "tsx server.ts",
     "build": "node build.js",
     "build:dev": "node -e \"import('./build.js').then(m => m.default({ mode: 'development' }))\"",
-    "start": "vite preview --host 0.0.0.0 --port $PORT",
+    "start": "vite preview --host 0.0.0.0 --port ${PORT:-10000}",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
