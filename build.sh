@@ -1,18 +1,18 @@
 #!/bin/bash
 set -e
 
-echo "==> Installing dependencies..."
+echo "==> Entering UC-SmartHelp-main directory..."
 cd UC-SmartHelp-main
 
-# Clean npm cache and remove lock files to fix optional dependency issues
-rm -rf node_modules package-lock.json
+echo "==> Cleaning npm cache..."
+rm -rf node_modules
+rm -f package-lock.json
 npm cache clean --force
 
-# Install dependencies WITHOUT running postinstall script to avoid build errors
-echo "Installing packages (skipping postinstall)..."
+echo "==> Installing dependencies (skipping postinstall)..."
 npm install --production=false --ignore-scripts
 
-echo "==> Building application..."
+echo "==> Running build..."
 npm run build
 
 echo "==> Build complete!"
