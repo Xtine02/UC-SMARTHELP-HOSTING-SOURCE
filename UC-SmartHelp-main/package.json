@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "server": "tsx server.ts",
-    "build": "node node_modules/vite/bin/vite.js build",
-    "build:dev": "node node_modules/vite/bin/vite.js build --mode development",
+    "build": "node build.js",
+    "build:dev": "node -e \"import('./build.js').then(m => m.default({ mode: 'development' }))\"",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
