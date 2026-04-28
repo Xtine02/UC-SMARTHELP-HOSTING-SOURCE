@@ -1,7 +1,21 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
+
+let reactPlugin;
+try {
+  reactPlugin = require("@vitejs/plugin-react-swc");
+} catch (error) {
+  console.warn("React SWC plugin not found, using fallback");
+  reactPlugin = null;
+}
+
+let componentTaggerPlugin;
+try {
+  componentTaggerPlugin = require("lovable-tagger").componentTagger;
+} catch (error) {
+  console.warn("Lovable tagger not found, using fallback");
+  componentTaggerPlugin = null;
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,7 +26,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [reactPlugin?.(), mode === "development" && componentTaggerPlugin?.()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
