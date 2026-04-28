@@ -1,1 +1,1 @@
-web: cd UC-SmartHelp-main && yarn install && yarn build && yarn start
+web: cd UC-SmartHelp-main && npm start
