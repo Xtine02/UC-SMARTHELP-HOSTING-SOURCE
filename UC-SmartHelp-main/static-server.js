@@ -1,5 +1,5 @@
 import { createServer } from 'http';
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -9,7 +9,19 @@ const port = process.env.PORT || 10000;
 const distPath = join(__dirname, 'dist');
 
 const server = createServer(async (req, res) => {
+  console.log(`Request: ${req.method} ${req.url}`);
+  
   try {
+    // Check if dist directory exists
+    try {
+      await access(distPath);
+    } catch (error) {
+      console.error('Dist directory not found');
+      res.writeHead(500, { 'Content-Type': 'text/html' });
+      res.end('<h1>Build Error: dist directory not found</h1><p>Please run npm run build first</p>');
+      return;
+    }
+    
     let filePath = join(distPath, req.url === '/' ? 'index.html' : req.url);
     
     try {
@@ -23,23 +35,34 @@ const server = createServer(async (req, res) => {
         'jpg': 'image/jpeg',
         'gif': 'image/gif',
         'svg': 'image/svg+xml',
-        'ico': 'image/x-icon'
+        'ico': 'image/x-icon',
+        'json': 'application/json'
       };
       
       res.writeHead(200, { 'Content-Type': contentTypes[ext] || 'text/plain' });
       res.end(data);
+      console.log(`Served: ${filePath}`);
     } catch (fileError) {
+      console.log(`File not found: ${filePath}, falling back to index.html`);
       // Fallback to index.html for SPA routing
-      const indexData = await readFile(join(distPath, 'index.html'));
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(indexData);
+      try {
+        const indexData = await readFile(join(distPath, 'index.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(indexData);
+      } catch (indexError) {
+        console.error('Index.html not found');
+        res.writeHead(500, { 'Content-Type': 'text/html' });
+        res.end('<h1>Build Error: index.html not found</h1><p>Please run npm run build first</p>');
+      }
     }
   } catch (error) {
-    res.writeHead(500);
-    res.end('Internal Server Error');
+    console.error('Server error:', error);
+    res.writeHead(500, { 'Content-Type': 'text/html' });
+    res.end('<h1>Internal Server Error</h1>');
   }
 });
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
+  console.log(`Dist path: ${distPath}`);
 });
