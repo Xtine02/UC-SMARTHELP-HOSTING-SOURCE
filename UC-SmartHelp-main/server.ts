@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import mysql, { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { Pool } from 'pg';
 import bcrypt from 'bcrypt';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -20,12 +20,31 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(cors());
 
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'uc_smarthelp',
+// PostgreSQL connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost/uc_smarthelp',
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
+
+// Convert MySQL parameter syntax (?) to PostgreSQL syntax ($1, $2, etc)
+function convertSql(sql: string) {
+  let paramIndex = 1;
+  return sql.replace(/\?/g, () => `$${paramIndex++}`);
+}
+
+// Wrapper to make PostgreSQL behave like mysql2/promise
+const db = {
+  async query(sql: string, values?: any[]) {
+    const converted = convertSql(sql);
+    const result = await pool.query(converted, values);
+    return [result.rows, null];
+  },
+  async execute(sql: string, values?: any[]) {
+    const converted = convertSql(sql);
+    const result = await pool.query(converted, values);
+    return [result.rows, null];
+  }
+};
 
 const OVERDUE_TICKET_DEMO_MINUTES = 5; // demo threshold only
 const OVERDUE_WARNING_MINUTES = 40; // warn staff after 40 minutes unattended
@@ -63,8 +82,10 @@ interface User extends RowDataPacket {
 // Helper to return the correct ticket response table name.
 // Some installs use `ticket_response` (singular), others use `ticket_responses`.
 const getResponseTableName = async () => {
-  const [tables] = await db.query<RowDataPacket[]>("SHOW TABLES");
-  const tableNames = tables.map((row: RowDataPacket) => Object.values(row)[0]);
+  const result = await pool.query(
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+  );
+  const tableNames = result.rows.map((row: any) => row.table_name);
   if (tableNames.includes('ticket_response')) return 'ticket_response';
   if (tableNames.includes('ticket_responses')) return 'ticket_responses';
   return 'ticket_response';
